@@ -1,0 +1,24 @@
+archive/
+Distributions/
+*.mch
+*.MCH
+*.o
+*.O
+*.err
+*.ERR
+*.hex
+*.HEX
+*.lst
+*.LST
+*.map
+*.MAP
+*.cof
+*.COF
+*.mcp
+*.MCP
+*.mcs
+*.MCS
+*.mcw
+*.MCW
+OPT EDM Main PIC 2.X/build
+OPT EDM Main PIC 2.X/*.fil
