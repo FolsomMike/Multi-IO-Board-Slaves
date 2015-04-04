@@ -36,6 +36,28 @@
 ; PIC chips occupy a different address space as the upper nibble of their address can be set to
 ; anything, unlike the pots which have a fixed upper nibble.
 ;
+; Sync & Sync Reset I/O Configuration
+;
+; NOTE: The sync input is defined as SYNCT in this program as SYNC is already a pre-defined term.
+;
+;   Master PIC
+;
+;    Sync Reset connected to RA0 and RA5, either pin can be used to monitor the signal.
+;    RA0 input allows Interrupt on Change (IOC) of the signal.
+;    RA5 input allows both IOC and tracking by counter Timer1.
+;
+;    As RA5 also provides the IOC option, the connection to RA0 is only to maintain design
+;    consistency with the Slave PICs which can only use RA0 as they must use RA5 as the system
+;    clock input.
+;
+;    Normally, the Master PIC monitors the Sync Reset RA0 using the IOC option. The Sync line is
+;    driven as an output on RC5 to the Slave PICs while RA1 is set to an input to avoid conflict.
+;
+;   Slave PICs
+;
+;    Sync Reset is monitored via RA0 using the IOC option. The Sync line is monitored via RC5
+;    configured to count pulses with Timer 0. The Sync Reset pulse triggers a reset of the counter.
+;
 ;--------------------------------------------------------------------------------------------------
 ; Notes on PCLATH
 ;
@@ -83,38 +105,38 @@
 ;
 ; Function by Pin
 ;
-; Port A
+; Port A        Pin/Options/Selected Option/Description  (only the most common options are listed)
 ;
-; RA0   In  - 
-; RA1   In  - 
-; RA2   xxx - 
-; RA3   In  - 
-; RA4   In  - 
-; RA5   Out - 
-; RA6   xxx - 
-; RA7   xxx - 
+; RA0   I/*,IOC,USB-D+                  ~ I ~ Sync Reset
+; RA1   I/*,IOC,USB-D-                  ~ I ~ not used, tied to Sync on RC5
+; RA2   not implemented in PIC16f1459
+; RA3   I/*,IOC,T1G,MSSP-SS,Vpp,MCLR    ~ Vpp
+; RA4   I/O,IOC,T1G,CLKOUT,CLKR, AN3    ~ CLKOUT
+; RA5   I/O,IOC,T1CKI,CLKIN             ~ CLKIN
+; RA6   not implemented in PIC16f1459
+; RA7   not implemented in PIC16f1459
 ;
-; Port B
+; Port B        Pin/Options/Selected Option/Description  (only the most common options are listed)
 ;
-; RB0   xxx - 
-; RB1   xxx - 
-; RB2   xxx - 
-; RB3   xxx - 
-; RB4   I/O - 
-; RB5   In  - 
-; RB6   Out - 
-; RB7   Out - 
+; RB0   not implemented in PIC16f1459
+; RB1   not implemented in PIC16f1459
+; RB2   not implemented in PIC16f1459
+; RB3   not implemented in PIC16f1459
+; RB4   I/O,IOC,MSSP-SDA/SDI,AN10       ~ I ~ I2CSDA, I2C bus data line to slaves
+; RB5   I/O,IOC,EUSART-RX/DX,AN11       ~ O ~ digital pot select on 1/2 of slaves, NC on others
+; RB6   I/O,IOC,MSSP-SCL/SCK            ~ I ~ I2CSCL, I2C bus clock line to slaves
+; RB7   I/O,IOC,EUSART-TX/CK            ~ 0 ~ no connection
 ;
-; Port C
+; Port C        Pin/Options/Selected Option/Description  (only the most common options are listed)
 ;
-; RC0   Out -
-; RC1   Out -
-; RC2   Out -
-; RC3   Out -
-; RC4   Out -
-; RC5   Out -
-; RC6   Out -
-; RC7   Out -
+; RC0   I/O,AN4,C1/2IN+,ICSPDAT,Vref    ~ ICSPDAT ~ in circuit programming data line
+; RC1   I/O,AN5,C1/2IN1-,ICSPCLK,INT    ~ ICSPCLK ~ in circuit programming clock line
+; RC2   I/O,AN6,C1/2IN2-,DACOUT1        ~ I ~ slave I2C bus address bit 0
+; RC3   I/O,AN7,C1/2IN3-,DACOUT2,CLKR   ~ I ~ slave I2C bus address bit 1
+; RC4   I/O,C1/2OUT                     ~ I ~ slave I2C bus address bit 2
+; RC5   I/O,T0CKI,PWM1                  ~ TOCKI ~ sync from master
+; RC6   I/O,AN8,PWM2,MSSP-SS            ~ O ~ no connection
+; RC7   I/O,AN9,MSSP-SDO                ~ AN9 ~ A/D converter input
 ;
 ;end of Hardware Control Description
 ;--------------------------------------------------------------------------------------------------
@@ -168,7 +190,7 @@ PIC_START_CMD                   EQU 0x01
 
 ; CONFIG1
 ; __config 0xF9E4
- __CONFIG _CONFIG1, _FOSC_INTOSC & _WDTE_OFF & _PWRTE_OFF & _MCLRE_OFF & _CP_OFF & _BOREN_OFF & _CLKOUTEN_ON & _IESO_OFF & _FCMEN_OFF
+ __CONFIG _CONFIG1, _FOSC_INTOSC & _WDTE_OFF & _PWRTE_OFF & _MCLRE_ON & _CP_OFF & _BOREN_OFF & _CLKOUTEN_ON & _IESO_OFF & _FCMEN_OFF
 ; CONFIG2
 ; __config 0xFFFF
  __CONFIG _CONFIG2, _WRT_ALL & _CPUDIV_NOCLKDIV & _USBLSCLK_48MHz & _PLLMULT_4x & _PLLEN_DISABLED & _STVREN_ON & _BORV_LO & _LPBOR_OFF & _LVP_OFF
@@ -176,7 +198,7 @@ PIC_START_CMD                   EQU 0x01
 ; _FOSC_INTOSC -> internal oscillator, I/O function on OSC1/CLKIN pin
 ; _WDTE_OFF -> watch dog timer disabled
 ; _PWRTE_OFF -> Power Up Timer disabled
-; _MCLRE_OFF -> MCLR/VPP pin is digital input
+; _MCLRE_ON -> MCLR/VPP pin is Master Clear with weak pull-up automatically enabled
 ; _CP_OFF -> Flash Program Memory Code Protection off
 ; _BOREN_OFF -> Power Brown-out Reset off
 ; _CLKOUTEN_ON -> CLKOUT function on, Fosc/4 -> CLKOUT pin
@@ -201,28 +223,62 @@ PIC_START_CMD                   EQU 0x01
 
 ;--------------------------------------------------------------------------------------------------
 ; Hardware Definitions
-
-; Port A
-
-UNUSED_RA4      EQU     RA4
-
-; Port B
-
-UNUSED_RB5      EQU     RB5
-
-; pin used for debugging -- sometimes used as an output or input
-DEBUG_IO_P      EQU     LATB
-DEBUG_IO        EQU     RB7
-
-; Port C
 ;
-; NOTE: For all write operations, the port's latch is written to in order to avoid
-; read-modify-write issues sometimes caused by writing to the port's pins.
+; Note regarding Port Latches vs Pins
+;
+; Writing to individial port pins can cause problems because that uses a read-modify-write
+; operation. If the pins are read, some outputs could read differently than they are programmed in
+; the port latch if the external hardware is causing the outputs to change state slowly. Thus,
+; when the read-modify-write operation writes back to the latch, the wrong value for some pins
+; might be permanently written.
+;
+; To avoid this, such operations should be done to the port latches (LATA, LATB, LATC) instead of
+; the port (PORTA, PORTB, PORTC). This ensures that the values read are what have actually been
+; programmed.
+;
+; For convenience, the port defines below are set to the Port when the associated signal is an
+; input and to the Latch when the associated signal is an output so that the proper register will
+; be used for each case.
+;
 
-UNUSED_C            EQU     LATC
+; Port A defines
 
-SOME_OUTPUT         EQU     LATC
-UNUSED_RC0          EQU     RC0
+SYNC_RESET      EQU 0           ; input on RA0
+SYNCT_RA1       EQU 1           ; not used, must be input, same signal as RC5
+RA2             EQU 2           ; not implemented in PIC16f1459
+RA3             EQU 3           ; Vpp ~ not used as I/O
+RA4             EQU 4           ; CLKOUT ~ not used as I/O
+RA5             EQU 5           ; CLKIN ~ not used as I/O
+
+SYNC_RESET_RD   EQU PORTA
+
+; Port B defines
+
+RB0             EQU 0           ; not implemented in PIC16f1459
+RB1             EQU 1           ; not implemented in PIC16f1459
+RB2             EQU 2           ; not implemented in PIC16f1459
+RB3             EQU 3           ; not implemented in PIC16f1459
+I2CSDA          EQU 4           ; I2C bus SDA line
+DIG_POT_EN      EQU 5           ; digital pot enable
+I2CSCL          EQU 6           ; I2C bus SCL line
+RB7             EQU 7           ; not used, set as input with weak pullup
+
+DIG_POT_EN_WR   EQU LATB
+
+; Port C defines
+
+RC0             EQU 0           ; ICSPDAT ~ not used as I/O
+RC1             EQU 1           ; ICSPCLK ~ not used as I/O
+I2C_ADDR0       EQU 2           ; slave I2C address bit 0
+I2C_ADDR1       EQU 3           ; slave I2C address bit 1
+I2C_ADDR2       EQU 4           ; slave I2C address bit 2
+SYNCT           EQU 5           ; Sync input from master
+RC6             EQU 6           ; not used, set as output
+AD_AN9          EQU 7           ; AN9 ~ A/D converter input, set as input
+
+I2C_ADDR_RD     EQU PORTC
+SYNCT_RD        EQU PORTC
+
 
 ; end of Hardware Definitions
 ;--------------------------------------------------------------------------------------------------
@@ -235,13 +291,21 @@ UNUSED_RC0          EQU     RC0
 STARTED             EQU     0x00     ; normal processing code has started
 UNUSED_FLAG1        EQU     0x01     ;
 
-; values for A/D register ADCON0 to select channels and turn A/D on
+; values for A/D register ADCON0 to select channel and enable A/D
 
-; Current Monitor input channel/pin: AN3/RA4
-SAMPLE_CURRENT_INPUT    EQU     b'00001101'
+; ADCON0 bits
+; bit 7 = 0 : unimplemented
+; bit 6 = 0 : bits 6-2 : analog input channel
+; bit 5 = 1 :    01001 -> AN9
+; bit 4 = 0 :
+; bit 3 = 0 :
+; bit 2 = 1 :
+; bit 1 = 0 : Go|/Done
+; bit 0 = 1 : ADC is enabled
 
-; Voltage Monitor input channel/pin: AN11/RB5
-SAMPLE_VOLTAGE_INPUT    EQU     b'00101101'
+; A/D convertor selection for analog input channel/pin: AN9 on pin RC7
+
+AD_START_CODE    EQU     b'00100101'
 
 ; end of Software Definitions
 ;--------------------------------------------------------------------------------------------------
@@ -388,11 +452,11 @@ setup:
 
     call    setupClock      ; set system clock source and frequency
 
-   ; call    setupPortA      ; prepare Port A for I/O
+    call    setupPortA      ; prepare Port A for I/O
 
-   ; call    setupPortB      ; prepare Port B for I/O
+    call    setupPortB      ; prepare Port B for I/O
 
-   ; call    setupPortC      ; prepare Port C  for I/O
+    call    setupPortC      ; prepare Port C  for I/O
 
     call    initializeOutputs
 
@@ -444,8 +508,8 @@ setup:
 
 initializeOutputs:
 
-
-;   bcf or bsf whatever pin is connected to the digital pot address input
+    banksel DIG_POT_EN_WR
+    bcf DIG_POT_EN_WR, DIG_POT_EN           ; disable the digital pot connected to this pin
 
     return
 
@@ -494,29 +558,28 @@ setupClock:
 
 setupPortA:
 
-    banksel WPUA
-    movlw   b'00000000'                 ; disable weak pull-ups
-    movwf   WPUA
+    ; start with known safe configuration
 
-    banksel PORTA
-    clrf    PORTA                       ; init port value
+    banksel PORTA                       ; init port value
+    clrf    PORTA
 
-    banksel LATA                        ; init port data latch
+    banksel LATA                        ; init port data latch (same as writing to PORTA)
     clrf    LATA
 
-    banksel ANSELA
-    clrf    ANSELA                      ; setup port for all digital I/O
+    banksel WPUA                        ; disable all weak pullups
+    clrf    WPUA
 
-    ; set I/O directions
+    banksel ANSELA                      ; all pins digital I/O
+    clrf    ANSELA
 
-    banksel TRISA
-    movlw   b'11111111'                 ; first set all to inputs
+    banksel TRISA                       ; all pins digital inputs
+    movlw   b'11111111'
     movwf   TRISA
 
-    ; set direction for each pin used
+    ; customize I/O directions
+    ; some pins configured further by other functions for setup of serial port, I2C, ADC, etc.
 
-    ;bsf     TRISA, ???                  ; input
-    ;bcf     TRISA, ???                  ; output
+    bsf     TRISA, SYNC_RESET           ; input
 
     return
 
@@ -536,29 +599,29 @@ setupPortA:
 
 setupPortB:
 
-    banksel WPUB
-    movlw   b'00000000'                 ; disable weak pull-ups
-    movwf   WPUB
+    ; start with known safe configuration
 
-    banksel PORTB
-    clrf    PORTB                       ; init port value
+    banksel PORTB                       ; init port value
+    clrf    PORTB
 
-    banksel LATB                        ; init port data latch
+    banksel LATB                        ; init port data latch (same as writing to PORTA)
     clrf    LATB
 
-    banksel ANSELB
-    clrf    ANSELB                      ; setup port for all digital I/O
+    banksel WPUB                        ; disable all weak pullups
+    clrf    WPUB
 
-    ; set I/O directions
+    banksel ANSELB                      ; all pins digital I/O
+    clrf    ANSELB
 
-    banksel TRISB
-    movlw   b'11111111'                 ; first set all to inputs
+    banksel TRISB                       ; all pins digital inputs
+    movlw   b'11111111'
     movwf   TRISB
 
-    bcf     TRISB,DEBUG_IO              ; debug pin
+    ; customize I/O directions
+    ; some pins configured further by other functions for setup of serial port, I2C, ADC, etc.
 
-    ;bsf     TRISB, ???           ; input
-    ;bcf     TRISB, ???           ; output
+    bcf     TRISB, DIG_POT_EN           ; output ~ digital pot enable
+    bcf     TRISB, RB7                  ; output ~ unused, set as output to prevent floating
 
     return
 
@@ -576,31 +639,31 @@ setupPortB:
 
 setupPortC:
 
+    ; start with known safe configuration
     ; Port C does not have a weak pull-up register
 
     banksel PORTC                       ; init port value
     clrf    PORTC
 
-    banksel LATC                        ; init port data latch
+    banksel LATC                        ; init port data latch (same as writing to PORTA)
     clrf    LATC
 
-    banksel ANSELC
-    clrf    ANSELC                      ; setup port for all digital I/O
+    banksel ANSELC                      ; all pins digital I/O
+    clrf    ANSELC
 
-    ; set I/O directions
-
-    banksel TRISC
-    movlw   b'11111111'                 ; first set all to inputs
+    banksel TRISC                       ; all pins digital inputs
+    movlw   b'11111111'
     movwf   TRISC
 
-; debug mks
-;    bcf     TRISC, LED0                 ; output
-;    bcf     TRISC, LED1                 ; output
-;    bcf     TRISC, LED2                 ; output
-;    bcf     TRISC, LED3                 ; output
-;    bcf     TRISC, LED4                 ; output
-;    bcf     TRISC, CURRENT_LED_LATCH    ; output
-;    bcf     TRISC, VOLTAGE_LED_LATCH    ; output
+    ; customize I/O directions
+    ; some pins configured further by other functions for setup of serial port, I2C, ADC, etc.
+
+    bsf     TRISC, I2C_ADDR0            ; input  ~ slave I2C bus address bit 0
+    bsf     TRISC, I2C_ADDR1            ; input  ~ slave I2C bus address bit 1
+    bsf     TRISC, I2C_ADDR2            ; input  ~ slave I2C bus address bit 2
+    bsf     TRISC, SYNCT                ; input  ~ from master for circumferential clock position
+    bcf     TRISC, RC6                  ; output ~ unused, set as output to prevent floating
+    bsf     TRISC, AD_AN9               ; input  ~ A/D converter analog input
 
     return
 
@@ -613,10 +676,12 @@ setupPortC:
 ; Sets the MASTER SYNCHRONOUS SERIAL PORT (MSSP) MODULE to the I2C Slave mode using the 7 bit
 ; address mode.
 ;
-; NOTE: RB4 and RB6 must have been configured elswhere as inputs for this mode.
-;
 
 setupI2CSlave7BitMode:
+
+    banksel TRISB
+    bsf TRISB, TRISB4       ; set RB4/I2CSDA to input
+    bsf TRISB, TRISB6       ; set RB6/I2CSCL to input
 
     movlw   I2C_SLAVE_ADDR  ; set the I2C slave device address
     banksel SSPADD
@@ -653,7 +718,7 @@ setupADConverter:
     ;This code block configures the ADC for polling, Vdd and Vss references,
     ; FOSC/16 clock
 
-    ; configure the A/D converter
+    ; set ADCON1 to configure the A/D converter
     ; bit 7 = 0 : left justify the result in ADRESH:ADRESL
     ; bit 6 = 1 : bits 6-4 : A/D Conversion Clock Select bits
     ; bit 5 = 0 :    101 -> FOSC/16
@@ -664,29 +729,21 @@ setupADConverter:
     ; bit 0 = 0 :    00 -> VREF+ connected to VDD
 
     banksel ADCON1
-    movlw   b'01010000'         ;left justify, FOSC/16 clock
-    movwf   ADCON1              ;Vdd is Vref+
+    movlw   b'01010000'
+    movwf   ADCON1
 
-    ; Current Monitor input channel/pin: AN3/RA4
+    ; input channel/pin: AN9/RC7
 
     banksel TRISA
-    ;bsf     TRISA,CURRENT_MONITOR_INPUT     ;set I/O pin to input
+    bsf     TRISA, AD_AN9                       ;set I/O pin to input
 
     banksel ANSELA
-    ;bsf     ANSELA,CURRENT_MONITOR_INPUT    ;set I/O pin to analog
+    bsf     ANSELA, AD_AN9                      ;set I/O pin to analog mode
 
-    ; Voltage Monitor input channel/pin: AN11/RB5
-
-    banksel TRISB
-    ;bsf     TRISB,VOLTAGE_MONITOR_INPUT     ;set I/O pin to input
-
-    banksel ANSELB
-    ;bsf     ANSELB,VOLTAGE_MONITOR_INPUT    ;set I/O pin to analog
-
-    ; turn on A/D module and begin sampling Current Monitor input
+    ; turn on A/D module and begin conversion
 
     banksel ADCON0
-    movlw   SAMPLE_CURRENT_INPUT
+    movlw   AD_START_CODE
     movwf   ADCON0
 
     return
@@ -695,10 +752,11 @@ setupADConverter:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; handleADConversionFinished
+; doADConversion
 ;
-; Reads the A/D inputs for the current and voltage levels and displays them on the appropriate
-; LED arrays.
+; Starts the A/D convertor, waits until it finishes, then processes the value. This method is a
+; simple, crude, way of obtaining an A/D value. It will only execute when the adTrigger:0 flag has
+; been set. This is usually done by a timer interrupt.
 ;
 ; If the adTrigger flag has not been set by a Timerx interrupt, function returns immediately.
 ; If flag is set, it is cleared and the A/D processed.
@@ -707,40 +765,29 @@ setupADConverter:
 ; to settle between processing.
 ;
 
-handleADConversionFinished:
+doADConversion:
 
-    ; do nothing until adTrigger bit 0 is set
+    ; do nothing if adTrigger bit 0 is not set
 
     banksel adTrigger
     btfss   adTrigger,0
     return
 
-    clrf    adTrigger           ; clear flag so interrupt routine can set it
+    clrf    adTrigger           ; clear flag so interrupt routine can set it again next period
 
-    ; if flag is 0, handle Current input else handle voltage input
+    goto    getADValue
 
-    banksel flags
-
-;    btfss   flags,CURRENT_VOLTAGE_AD
-;    goto    handleInvVoltageToCurrentLED
-
-;   goto    handleVoltageADToLED
-
-    return
-
-; end of handleADConversionFinished
+; end of doADConversion
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; handleCurrentADToLED
+; getADValue
 ;
-; Converts the Current Monitor input voltage and represents its value on the Current LED Array.
-;
-; Sets up the A/D to begin sampling the Voltage input before exiting so it will be ready for
-; conversion on the next trigger.
+; Starts the A/D convertor, waits until it finishes, then processes the value. This method is a
+; simple, crude, way of obtaining an A/D value.
 ;
 
-handleCurrentADToLED:
+getADValue:
 
     banksel ADCON0
     bsf     ADCON0,ADGO                 ;start conversion
@@ -748,13 +795,6 @@ handleCurrentADToLED:
 hcatl1:
     btfsc   ADCON0,ADGO                 ;loop until conversion done
     goto    hcatl1
-
-    ; turn on A/D module and begin sampling Voltage Monitor input so it will be
-    ; ready to convert on next call
-
-    banksel ADCON0
-    movlw   SAMPLE_VOLTAGE_INPUT
-    movwf   ADCON0
 
     ; Store the value from ADRESH to scratch0
     ; It is assumed that the A/D value is left justified, thus the upper 8 bits will be used
@@ -767,7 +807,9 @@ hcatl1:
     banksel scratch0
     movwf   scratch0            ; store the A/D value
 
-; end of handleCurrentADToLED
+    return
+
+; end of getADValue
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -1269,9 +1311,9 @@ handleTimer0Interrupt:
     movwf   TMR0
 
 ;debug mks -- output a pulse to verify the timer0 period
-    banksel DEBUG_IO_P
-    bsf     DEBUG_IO_P,DEBUG_IO
-    bcf     DEBUG_IO_P,DEBUG_IO
+    banksel LATB
+    bsf     LATB, RB7
+    bcf     LATB, RB7
 ;debug mks end
 
     ; trigger the next A/D conversion
