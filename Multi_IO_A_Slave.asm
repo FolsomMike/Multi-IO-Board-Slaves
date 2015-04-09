@@ -157,13 +157,22 @@
 
 ;#define debug 1     ; set debug testing "on"
 
-I2C_SLAVE_ADDR                      EQU     b'10100100'
-
+I2C_SLAVE_ADDR_UPPER            EQU     b'11110000'
 
 ; Master PIC to Slave PIC Commands -- sent by Master to Slaves via I2C to trigger actions
 
-PIC_GET_ALL_STATUS_CMD          EQU 0x00
-PIC_START_CMD                   EQU 0x01
+PIC_NO_ACTION_CMD               EQU 0x00
+PIC_GET_ALL_STATUS_CMD          EQU 0x01
+PIC_START_CMD                   EQU 0x02
+PIC_GET_PEAK_PKT_CMD            EQU 0X03
+PIC_ENABLE_POT_CMD              EQU 0x04
+PIC_DISABLE_POT_CMD             EQU 0x05
+
+I2C_RCV_BUF_LEN      EQU .5     ; these should always match with one preceded by a period
+I2C_RCV_BUF_LEN_RES  EQU 5      ; one is used in the variable definition, one used in code
+
+I2C_XMT_BUF_LEN      EQU .20     ; these should always match with one preceded by a period
+I2C_XMT_BUF_LEN_RES  EQU 20      ; one is used in the variable definition, one used in code
 
 ; end of Defines
 ;--------------------------------------------------------------------------------------------------
@@ -279,7 +288,6 @@ AD_AN9          EQU 7           ; AN9 ~ A/D converter input, set as input
 I2C_ADDR_RD     EQU PORTC
 SYNCT_RD        EQU PORTC
 
-
 ; end of Hardware Definitions
 ;--------------------------------------------------------------------------------------------------
 
@@ -332,11 +340,16 @@ AD_START_CODE    EQU     b'00100101'
 							; bit 6: 0 = 
 							; bit 7: 0 = 
 
+    comErrorCnt             ; tracks the number of communication errors
+
+    adValue                 ; last A/D conversion value
+
     adTrigger               ; 0 = not ready; 1 = handle A/D input
                             ; set by Timer0 interrupt to trigger the next A/D conversion
                             ; cleared by handleADToLEDArrays
                             ; an entire byte is used to avoid read-modify-write issues between the
                             ; main thread and the interrupt thread
+    masterCmd               ; command byte received from Master via I2C bus
 
     scratch0                ; these can be used by any function
     scratch1
@@ -349,6 +362,14 @@ AD_START_CODE    EQU     b'00100101'
     scratch8
     scratch9
     scratch10
+
+    i2cXmtBufPtrH
+    i2cXmtBufPtrL
+    i2cXmtBuf:I2C_XMT_BUF_LEN_RES
+
+    i2cRcvBufPtrH
+    i2cRcvBufPtrL
+    i2cRcvBuf:I2C_RCV_BUF_LEN_RES
 
  endc
 
@@ -683,24 +704,35 @@ setupI2CSlave7BitMode:
     bsf TRISB, TRISB4       ; set RB4/I2CSDA to input
     bsf TRISB, TRISB6       ; set RB6/I2CSCL to input
 
-    movlw   I2C_SLAVE_ADDR  ; set the I2C slave device address
-    banksel SSPADD
-    movwf   SSPADD
-    
-    movlw   0xff            ; bits <7:1> of SSPADD are used to match address
-    banksel SSPMSK          ; (bit <0> is ignored in 7 bit address mode)
-    movwf   SSPMSK
+    movlw   I2C_SLAVE_ADDR_UPPER  ; set the I2C slave device address (only upper nibble)
+    banksel SSP1ADD
+    movwf   SSP1ADD
 
-    banksel SSPCON2         ; enable clock stretching -- upon receiving a byte this PIC will
-    bsf     SSPCON2,SEN     ; hold clock and halt further transmissions until CKP bit cleared
+    ; copy the address input bits which identify this PIC's address on the I2C bus to the
+    ; 3 lsbs of the Slave Address register (bit 0 is not used, 7 bit address starts at bit 1)
+    ; each Slave PIC's three address inputs are tied uniquely high/low
 
-    banksel SSPCON1
-    bcf     SSPCON1,SSP1M0		; SSPM = b0110 ~ I2C Slave mode
-    bsf     SSPCON1,SSP1M1
-    bsf     SSPCON1,SSP1M2
-    bcf     SSPCON1,SSP1M3
+    btfsc   I2C_ADDR_RD, I2C_ADDR0
+    bsf     SSP1ADD,1
+    btfsc   I2C_ADDR_RD, I2C_ADDR1
+    bsf     SSP1ADD,2
+    btfsc   I2C_ADDR_RD, I2C_ADDR2
+    bsf     SSP1ADD,3
 
-    bsf	SSPCON1,SSPEN		;enables the MSSP module
+    movlw   0xff            ; bits <7:1> of SSP1ADD are used to match address
+    banksel SSP1MSK         ; (bit <0> is ignored in 7 bit address mode)
+    movwf   SSP1MSK
+
+    banksel SSP1CON2        ; enable clock stretching -- upon receiving a byte this PIC will
+    bsf     SSP1CON2,SEN    ; hold clock and halt further transmissions until CKP bit cleared
+
+    banksel SSP1CON1
+    bcf     SSP1CON1,SSP1M0	; SSPM = b0110 ~ I2C Slave mode
+    bsf     SSP1CON1,SSP1M1
+    bsf     SSP1CON1,SSP1M2
+    bcf     SSP1CON1,SSP1M3
+
+    bsf	SSP1CON1,SSPEN		;enables the MSSP module
 
     return
 
@@ -813,6 +845,158 @@ hcatl1:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
+; getAllStatus
+;
+; Places the flags byte, communication error count, and last A/D conversion value in a buffer and
+; transmits it back to the Master via I2C. Clock stretching is enabled so the bus will wait as
+; necessary between each byte.
+;
+; The communication error count is cleared.
+;
+; This function is done in the main code and not in interrupt code. It is expected that the A/D
+; converter interrupt will occur one or more times during transmission of the peak data.
+;
+
+getAllStatus:
+
+    ; set buffer pointer to transmit buffer start
+    banksel i2cXmtBuf
+    movlw   i2cXmtBuf
+    movwf   i2cXmtBufPtrL
+    clrf    i2cXmtBufPtrH               ; bank 0
+
+    movf    i2cXmtBufPtrH, W            ; load FSR0 with buffer pointer
+    movwf   FSR0H
+    movf    i2cXmtBufPtrL, W
+    movwf   FSR0L
+
+    banksel flags
+
+    ;debug mks
+
+    movlw   0x44
+    movwf   flags
+    movlw   0x45
+    movwf   comErrorCnt
+    movlw   0x46
+    movwf   adValue
+
+    ;debug mks end
+
+
+    movf    flags,W
+    movwi   FSR0++                      ; store in I2C xmt buffer
+
+    movf    comErrorCnt,W
+    movwi   FSR0++                      ; store in I2C xmt buffer
+
+    movf    adValue,W
+    movwi   FSR0++                      ; store in I2C xmt buffer
+
+    clrf    comErrorCnt
+
+    goto sendI2CBuffer
+
+; end getAllStatus
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; sendI2CBuffer
+;
+; Sends bytes from the buffer pointed to by i2cXmtBufPtrH:L through the I2C bus. The number of bytes
+; sent will be controlled by the Master. If the Master requests more bytes than have been loaded
+; into the buffer, the extra bytes sent will be whatever happens to be after the last valid byte
+; in the buffer.
+;
+
+sendI2CBuffer:
+
+    banksel i2cXmtBuf
+    movf    i2cXmtBufPtrH, W            ; load FSR0 with buffer pointer
+    movwf   FSR0H
+    movf    i2cXmtBufPtrL, W
+    movwf   FSR0L
+
+sIBXmtLoop:
+
+    call    clearWCOL                   ; make sure error flag is reset to allow sending
+
+    moviw   FSR0++                      ; send next byte in buffer
+    movwf   SSP1BUF
+
+    call    clearSSP1IF                 ; clear the I2C interrupt flag
+    call    setCKP                      ; release the I2C clock line so master can send next byte
+
+    call    waitForSSP1IFHighOrStop     ; wait for byte or stop condition to be received
+
+    btfss   STATUS,Z
+    goto    cleanUpI2CAndReturn          ; bail out when stop condition received
+
+    btfss   SSP1CON2,ACKSTAT
+    goto    sIBXmtLoop
+
+    call    waitForSSP1IFHighOrStop     ; wait for byte or stop condition to be received
+    goto    cleanUpI2CAndReturn         ; reset all status and error flags
+
+; end sendI2CBuffer
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; getPeakPacket
+;
+; Places the current peak data in a buffer and transmits it back to the Master via I2C. Clock
+; stretching is enabled so the bus will wait as necessary between each byte.
+;
+; This function is done in the main code and not in interrupt code. It is expected that the A/D
+; converter interrupt will occur one or more times during transmission of the peak data.
+;
+
+getPeakPacket:
+
+
+
+    return
+
+; end getPeakPacket
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; enableDigitalPot
+;
+; Enables the digital pot connected to this PIC by setting the I/O pin connected to the pot's A2
+; address line high. This makes the pot's 3 lsb address bits 100b so the Master can communicate
+; with it at 1010100xb
+;
+
+enableDigitalPot:
+
+    banksel DIG_POT_EN_WR
+    bsf     DIG_POT_EN_WR, DIG_POT_EN
+
+    return
+
+; end enableDigitalPot
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; disableDigitalPot
+;
+; Disables the digital pot connected to this PIC by setting the I/O pin connected to the pot's A2
+; address line low. This makes the pot's 3 lsb address bits 000b so it will ignore the Master
+; when it addresses the lone enabled pot at address 1010100b.
+;
+
+disableDigitalPot:
+
+    banksel DIG_POT_EN_WR
+    bcf     DIG_POT_EN_WR, DIG_POT_EN
+
+    return
+
+; end disableDigitalPot
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
 ; handleI2CCommand
 ;
 ; Checks to see if this PIC has received an ID byte via the I2C bus which matches its address.
@@ -832,15 +1016,12 @@ handleI2CCommand:
     return
     endif
 
-    banksel SSPBUF
-    movf    SSPBUF,W            ; get incoming value; clears BF flag
-
-    call    clearSSP1IF         ; clear the I2C interrupt flag
-    call    setCKP              ; release the I2C clock line so master can send next byte
+    banksel SSP1BUF
+    movf    SSP1BUF,W            ; get incoming value; clears BF flag
 
 ; jump to handle receive or transmit request
 ; if bit 0 of the address byte is 0, the master is sending and this PIC is receiving
-; if bit 1 is 1, the master is receiving and this PIC is sending
+; if bit 0 is 1, the master is receiving and this PIC is sending
 
     btfss   WREG,0
     goto    handleI2CReceive
@@ -856,28 +1037,44 @@ handleI2CCommand:
 ;
 ; Handles the receipt of data from the master on the I2C bus.
 ;
-; The next byte read should be the command byte which determines the total number of bytes
-; expected.
+; The next byte read should be the command byte.
 ;
 
 handleI2CReceive:
 
+    call    clearSSP1IF                 ; clear the I2C interrupt flag
+    call    setCKP                      ; release the I2C clock line so master can send next byte
+
     call    waitForSSP1IFHighOrStop     ; wait for byte or stop condition to be received
 
     btfss   STATUS,Z
-    return                              ; bail out if stop condition received
+    goto    cleanUpI2CAndReturn         ; bail out when stop condition received
 
     call    readI2CByteAndPrepForNext   ; get the byte just received
 
-    banksel scratch0
-    movwf   scratch0                    ; store the command byte
+    banksel masterCmd
+    movwf   masterCmd                   ; store the command byte
 
-; parse the command byte by comparing with each command
+; parse the command byte by comparing with each command...if it is a command byte meant for use on
+; the next write operation, it will have been stored in masterCmd but MAY not match any test here
+; and will be ignored for the current operation but will be available for the next read operation,
+; if addressing bytes are required for the next read, then the command byte must be caught here
+; in order to jump to a function which will read and store those extra bytes
 
-    movf    scratch0,W
+    movf    masterCmd,W
     sublw   PIC_START_CMD
     btfsc   STATUS,Z
     goto    handleHostStartCmd
+
+    movf    masterCmd,W
+    sublw   PIC_ENABLE_POT_CMD
+    btfsc   STATUS,Z
+    goto    enableDigitalPot
+
+    movf    masterCmd,W
+    sublw   PIC_DISABLE_POT_CMD
+    btfsc   STATUS,Z
+    goto    disableDigitalPot
 
     return
 
@@ -890,12 +1087,40 @@ handleI2CReceive:
 ; Handles the transmission of data to the master on the I2C bus.
 ;
 ; The command byte specifying what data should be sent should have already been received in the
-; previous transmission from the master and stored in masterCommand variable.
+; previous transmission from the master and stored in the masterCmd variable.
+;
+; I2C Read Protocol
+;
+; When reading some devices, the Master sends a command and/or address bytes with a write
+; operation, performs a restart, sends a read command, then reads the data from the device. The
+; only thing a restart does over a stop and start operation is the restart allows the Master to
+; maintain control of the bus...another device cannot take it over.
+;
+; For the Multi-IO Board, there is only one master so it does not need to retain control. In order
+; to read data, the Master writes a command and/or further addressing information to the device in
+; the normal write protocol, ending with a stop signal. The Slave will save the information and
+; will expect that information to apply to the next read operation. The Master will then send a
+; normal read command to read the desired data. The Slave will know what information to send based
+; on the command and/or addressing info sent in the previous write command.
 ;
 
 handleI2CTransmit:
 
-    return                      ; bail out if stop condition received
+    ; parse the command byte received in the last write operation from Master via the I2C bus
+
+    banksel masterCmd
+
+    movf    masterCmd,W
+    sublw   PIC_GET_ALL_STATUS_CMD
+    btfsc   STATUS,Z
+    goto    getAllStatus
+
+    movf    masterCmd,W
+    sublw   PIC_GET_PEAK_PKT_CMD
+    btfsc   STATUS,Z
+    goto    getPeakPacket
+
+    return
 
 ; end handleI2CTransmit
 ;--------------------------------------------------------------------------------------------------
@@ -1047,7 +1272,7 @@ rBFILoop1:
     call    waitForSSP1IFHighOrStop     ; wait for byte or stop condition to be received
 
     btfss   STATUS,Z
-    goto    cleanUpAndReturn            ; bail out when stop condition received
+    goto    cleanUpI2CAndReturn         ; bail out when stop condition received
 
     call    readI2CByteAndPrepForNext   ; get the byte just received
 
@@ -1073,23 +1298,13 @@ skipByteStore:
 
     goto    rBFILoop1                   ; loop to read more bytes
 
-cleanUpAndReturn:
-
-    ; makes sure all flags are set/reset to enable data to be received
-
-    call    clearSSP1IF         ; clear the I2C interrupt flag
-    call    setCKP              ; release the I2C clock line so master can send next byte
-    call    clearSSPOV          ; clears the overflow bit to allow new data to be read
-
-    return
-
 ; end receiveBytesFromI2C
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
 ; readI2CByteAndPrepForNext
 ;
-; Reads value from SSPBUF into W register, resets SSP1IF, and sets CKP to release I2C clock so
+; Reads value from SSP1BUF into W register, resets SSP1IF, and sets CKP to release I2C clock so
 ; master can start sending the next byte.
 ;
 ; The last byte received is returned in W.
@@ -1097,12 +1312,12 @@ cleanUpAndReturn:
 
 readI2CByteAndPrepForNext:
 
-    banksel SSPBUF
-    movf    SSPBUF,W            ; get incoming value; clears BF flag
+    banksel SSP1BUF
+    movf    SSP1BUF,W            ; get incoming value; clears BF flag
 
     call    clearSSP1IF         ; clear the I2C interrupt flag
     call    setCKP              ; release the I2C clock line so master can send next byte
-    call    clearSSPOV          ; clears the overflow bit to allow new data to be read
+    call    clearSSP1OV         ; clears the overflow bit to allow new data to be read
 
     return
 
@@ -1151,7 +1366,8 @@ wfsh1:
 ;--------------------------------------------------------------------------------------------------
 ; waitForSSP1IFHighOrStop
 ;
-; Waits in a loop for SSP1IF bit in register PIR1 to go high.
+; Waits in a loop for SSP1IF bit in register PIR1 to go high or P (stop) bit in SSP1STAT to go
+; high.
 ;
 ; On exit:
 ;
@@ -1218,17 +1434,35 @@ waitForSSP1IFHighThenClearIt:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
+; cleanUpI2CAndReturn
+;
+; Clears all I2C status and error flags to ensure the bus is ready for further use.
+;
+
+cleanUpI2CAndReturn:
+
+    call    clearSSP1IF         ; clear the I2C interrupt flag
+    call    setCKP              ; release the I2C clock line so master can send next byte
+    call    clearSSP1OV         ; clears the overflow bit to allow new data to be read
+    call    clearWCOL           ; clears the write collision bit to allow new data to be written
+
+    return
+
+; end of cleanUpI2CAndReturn
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
 ; setCKP
 ;
-; Sets the CKP bit in register SSPCON1 to 1.
+; Sets the CKP bit in register SSP1CON1 to 1.
 ;
 ; This will release the I2C bus clock so the master can transmit the next byte.
 ;
 
 setCKP:
 
-    banksel SSPCON1
-    bsf     SSPCON1, CKP
+    banksel SSP1CON1
+    bsf     SSP1CON1, CKP
 
     return
 
@@ -1236,21 +1470,39 @@ setCKP:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; clearSSPOV
+; clearSSP1OV
 ;
 ; Clears the MSSP overflow bit to allow new bytes to be read.
 ;
 ; The bit is set if a byte was received before the previous byte was read from the buffer.
 ;
 
-clearSSPOV:
+clearSSP1OV:
 
     banksel SSP1CON1
     bcf     SSP1CON1,SSPOV
 
     return
 
-; end of clearSSPOV
+; end of clearSSP1OV
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; clearWCOL
+;
+; Clears the MSSP write collision bit to allow new bytes to be written
+;
+; The bit is set if a byte was placed in SSP1BUF at an improper time.
+;
+
+clearWCOL:
+
+    banksel SSP1CON1
+    bcf     SSP1CON1, WCOL
+
+    return
+
+; end of clearWCOL
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
