@@ -157,7 +157,11 @@
 
 ;#define debug 1     ; set debug testing "on"
 
-I2C_SLAVE_ADDR_UPPER            EQU     b'11110000'
+; upper nibble of I2C address for all Slave PICs is 1110b
+; 3 lsbs will be set to match the address inputs on each Slave PIC
+; note that 1111b upper nibble has special meaning in 10 bit address mode, so it is avoided here
+
+I2C_SLAVE_ADDR_UPPER            EQU     b'11100000'
 
 ; Master PIC to Slave PIC Commands -- sent by Master to Slaves via I2C to trigger actions
 
@@ -861,9 +865,10 @@ getAllStatus:
 
     ; set buffer pointer to transmit buffer start
     banksel i2cXmtBuf
+    movlw   high i2cXmtBuf
+    movwf   i2cXmtBufPtrH
     movlw   i2cXmtBuf
     movwf   i2cXmtBufPtrL
-    clrf    i2cXmtBufPtrH               ; bank 0
 
     movf    i2cXmtBufPtrH, W            ; load FSR0 with buffer pointer
     movwf   FSR0H
@@ -1236,6 +1241,9 @@ doReset:
 ; Receives a specified number of bytes from the I2C bus.
 ; Normally, this number is equal to the number of bytes read unless the master sends too few or
 ; too many.
+;
+; Acking: Slave hardware will generate an ACK response if the AHEN and DHEN bits of the SSPCON3
+; register are clear.
 ;
 ; On entry:
 ;  W register: the number of bytes to be stored
