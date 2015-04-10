@@ -344,6 +344,8 @@ AD_START_CODE    EQU     b'00100101'
 							; bit 6: 0 = 
 							; bit 7: 0 = 
 
+    slaveI2CAddress
+
     comErrorCnt             ; tracks the number of communication errors
 
     adValue                 ; last A/D conversion value
@@ -485,6 +487,8 @@ setup:
 
     call    initializeOutputs
 
+    call    parseSlaveIC2Address
+
     call    setupI2CSlave7BitMode ; prepare the I2C serial bus for use
 
     call    setupADConverter ; prepare A/D converter for use
@@ -523,6 +527,35 @@ setup:
     return
 
 ; end of setup
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; parseSlaveIC2Address
+;
+; Determines the PIC's I2C slave address by reading the address input bits which identify this
+; PIC's address . Each Slave PIC's three address inputs are tied uniquely high/low.
+;
+; The value is stored in slaveI2CAddress variable.
+; The address for the I2C module is NOT set...that is done when that module is set up.
+;
+
+parseSlaveIC2Address:
+
+    banksel slaveI2CAddress
+    clrf    slaveI2CAddress
+
+    ; set each of the 3 lsbs to match I/O input pins
+
+    btfsc   I2C_ADDR_RD, I2C_ADDR0
+    bsf     slaveI2CAddress,0
+    btfsc   I2C_ADDR_RD, I2C_ADDR1
+    bsf     slaveI2CAddress,1
+    btfsc   I2C_ADDR_RD, I2C_ADDR2
+    bsf     slaveI2CAddress,2
+
+    return
+
+; end of parseSlaveIC2Address
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -875,6 +908,8 @@ getAllStatus:
     movf    i2cXmtBufPtrL, W
     movwf   FSR0L
 
+    ; store various status values in the transmit buffer
+
     banksel flags
 
     ;debug mks
@@ -888,15 +923,21 @@ getAllStatus:
 
     ;debug mks end
 
+    movf    slaveI2CAddress,W
+    movwi   FSR0++                      
 
     movf    flags,W
-    movwi   FSR0++                      ; store in I2C xmt buffer
+    movwi   FSR0++
 
     movf    comErrorCnt,W
-    movwi   FSR0++                      ; store in I2C xmt buffer
+    movwi   FSR0++
 
     movf    adValue,W
-    movwi   FSR0++                      ; store in I2C xmt buffer
+    movwi   FSR0++
+
+    movlw   0xa5                        ; debug mks -- checksum -- need to compute actual value
+    movwi   FSR0++
+
 
     clrf    comErrorCnt
 
