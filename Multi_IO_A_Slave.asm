@@ -157,6 +157,11 @@
 
 ;#define debug 1     ; set debug testing "on"
 
+; version of this software
+
+SOFTWARE_VERSION_MSB    EQU 0x01
+SOFTWARE_VERSION_LSB    EQU 0x01
+
 ; upper nibble of I2C address for all Slave PICs is 1110b
 ; 3 lsbs will be set to match the address inputs on each Slave PIC
 ; note that 1111b upper nibble has special meaning in 10 bit address mode, so it is avoided here
@@ -347,6 +352,10 @@ AD_START_CODE    EQU     b'00100101'
     slaveI2CAddress
 
     comErrorCnt             ; tracks the number of communication errors
+
+    maxADBufCnt             ; maximum number of A/D values stored in buffer at any one time
+                            ; should never be bigger than the size of the buffer, otherwise it
+                            ; is an overrun condition
 
     adValue                 ; last A/D conversion value
 
@@ -545,6 +554,8 @@ parseSlaveIC2Address:
     clrf    slaveI2CAddress
 
     ; set each of the 3 lsbs to match I/O input pins
+
+    banksel I2C_ADDR_RD
 
     btfsc   I2C_ADDR_RD, I2C_ADDR0
     bsf     slaveI2CAddress,0
@@ -749,16 +760,21 @@ setupI2CSlave7BitMode:
     ; 3 lsbs of the Slave Address register (bit 0 is not used, 7 bit address starts at bit 1)
     ; each Slave PIC's three address inputs are tied uniquely high/low
 
-    btfsc   I2C_ADDR_RD, I2C_ADDR0
-    bsf     SSP1ADD,1
-    btfsc   I2C_ADDR_RD, I2C_ADDR1
-    bsf     SSP1ADD,2
-    btfsc   I2C_ADDR_RD, I2C_ADDR2
-    bsf     SSP1ADD,3
+;debug mks -- put this back in
+;    banksel I2C_ADDR_RD
+;    movf    I2C_ADDR_RD, W
 
+;    banksel SSP1ADD
+;    btfsc   WREG, I2C_ADDR0
+;    bsf     SSP1ADD,1
+;    btfsc   WREG, I2C_ADDR1
+;    bsf     SSP1ADD,2
+;    btfsc   WREG, I2C_ADDR2
+;    bsf     SSP1ADD,3
+
+    banksel SSP1MSK
     movlw   0xff            ; bits <7:1> of SSP1ADD are used to match address
-    banksel SSP1MSK         ; (bit <0> is ignored in 7 bit address mode)
-    movwf   SSP1MSK
+    movwf   SSP1MSK         ; (bit <0> is ignored in 7 bit address mode)
 
     banksel SSP1CON2        ; enable clock stretching -- upon receiving a byte this PIC will
     bsf     SSP1CON2,SEN    ; hold clock and halt further transmissions until CKP bit cleared
@@ -919,17 +935,28 @@ getAllStatus:
     movlw   0x45
     movwf   comErrorCnt
     movlw   0x46
+    movwf   maxADBufCnt
+    movlw   0x47
     movwf   adValue
 
     ;debug mks end
 
     movf    slaveI2CAddress,W
-    movwi   FSR0++                      
+    movwi   FSR0++
+
+    movlw   SOFTWARE_VERSION_MSB
+    movwi   FSR0++
+
+    movlw   SOFTWARE_VERSION_LSB
+    movwi   FSR0++
 
     movf    flags,W
     movwi   FSR0++
 
     movf    comErrorCnt,W
+    movwi   FSR0++
+
+    movf    maxADBufCnt,W
     movwi   FSR0++
 
     movf    adValue,W
@@ -938,8 +965,8 @@ getAllStatus:
     movlw   0xa5                        ; debug mks -- checksum -- need to compute actual value
     movwi   FSR0++
 
-
     clrf    comErrorCnt
+    clrf    maxADBufCnt
 
     goto sendI2CBuffer
 
