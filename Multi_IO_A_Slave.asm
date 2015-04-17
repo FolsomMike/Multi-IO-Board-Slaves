@@ -760,17 +760,17 @@ setupI2CSlave7BitMode:
     ; 3 lsbs of the Slave Address register (bit 0 is not used, 7 bit address starts at bit 1)
     ; each Slave PIC's three address inputs are tied uniquely high/low
 
-;debug mks -- put this back in
-;    banksel I2C_ADDR_RD
-;    movf    I2C_ADDR_RD, W
 
-;    banksel SSP1ADD
-;    btfsc   WREG, I2C_ADDR0
-;    bsf     SSP1ADD,1
-;    btfsc   WREG, I2C_ADDR1
-;    bsf     SSP1ADD,2
-;    btfsc   WREG, I2C_ADDR2
-;    bsf     SSP1ADD,3
+    banksel I2C_ADDR_RD
+    movf    I2C_ADDR_RD, W
+
+    banksel SSP1ADD
+    btfsc   WREG, I2C_ADDR0
+    bsf     SSP1ADD,1
+    btfsc   WREG, I2C_ADDR1
+    bsf     SSP1ADD,2
+    btfsc   WREG, I2C_ADDR2
+    bsf     SSP1ADD,3
 
     banksel SSP1MSK
     movlw   0xff            ; bits <7:1> of SSP1ADD are used to match address
