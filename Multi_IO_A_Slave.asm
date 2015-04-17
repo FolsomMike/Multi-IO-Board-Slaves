@@ -1005,6 +1005,7 @@ sIBXmtLoop:
     btfss   STATUS,Z
     goto    cleanUpI2CAndReturn          ; bail out when stop condition received
 
+    banksel SSP1CON2
     btfss   SSP1CON2,ACKSTAT
     goto    sIBXmtLoop
 
@@ -1091,6 +1092,8 @@ handleI2CCommand:
 
     banksel SSP1BUF
     movf    SSP1BUF,W            ; get incoming value; clears BF flag
+
+    call    clearSSP1IF
 
 ; jump to handle receive or transmit request
 ; if bit 0 of the address byte is 0, the master is sending and this PIC is receiving
