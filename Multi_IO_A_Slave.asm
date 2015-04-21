@@ -177,11 +177,9 @@ PIC_GET_PEAK_PKT_CMD            EQU 0X03
 PIC_ENABLE_POT_CMD              EQU 0x04
 PIC_DISABLE_POT_CMD             EQU 0x05
 
-I2C_RCV_BUF_LEN      EQU .5     ; these should always match with one preceded by a period
-I2C_RCV_BUF_LEN_RES  EQU 5      ; one is used in the variable definition, one used in code
+I2C_RCV_BUF_LEN      EQU .5
 
-I2C_XMT_BUF_LEN      EQU .20     ; these should always match with one preceded by a period
-I2C_XMT_BUF_LEN_RES  EQU 20      ; one is used in the variable definition, one used in code
+I2C_XMT_BUF_LEN      EQU .20
 
 ; end of Defines
 ;--------------------------------------------------------------------------------------------------
@@ -305,8 +303,13 @@ SYNCT_RD        EQU PORTC
 
 ; bits in flags variable
 
-STARTED             EQU     0x00     ; normal processing code has started
-UNUSED_FLAG1        EQU     0x01     ;
+STARTED             EQU 0     ; normal processing code has started
+UNUSED_FLAG1        EQU 1     ;
+
+; bits in statusFlags variable
+
+COM_ERROR           EQU 0
+AD_OVERRUN          EQU 1
 
 ; values for A/D register ADCON0 to select channel and enable A/D
 
@@ -349,6 +352,15 @@ AD_START_CODE    EQU     b'00100101'
 							; bit 6: 0 = 
 							; bit 7: 0 = 
 
+    statusFlags             ; bit 0: 0 = one or more communication errors have occurred
+                            ; bit 1: 0 = an A/D buffer overrun has occurred
+                            ; bit 2: 0 =
+                            ; bit 3: 0 =
+                            ; bit 4: 0 =
+                            ; bit 5: 0 =
+							; bit 6: 0 =
+							; bit 7: 0 =
+
     slaveI2CAddress
 
     comErrorCnt             ; tracks the number of communication errors
@@ -380,11 +392,11 @@ AD_START_CODE    EQU     b'00100101'
 
     i2cXmtBufPtrH
     i2cXmtBufPtrL
-    i2cXmtBuf:I2C_XMT_BUF_LEN_RES
+    i2cXmtBuf:I2C_XMT_BUF_LEN
 
     i2cRcvBufPtrH
     i2cRcvBufPtrL
-    i2cRcvBuf:I2C_RCV_BUF_LEN_RES
+    i2cRcvBuf:I2C_RCV_BUF_LEN
 
  endc
 
@@ -464,6 +476,19 @@ start:
 
     call    setup               ; preset variables and configure hardware
 
+;debug mks
+
+    banksel i2cXmtBufPtrL
+
+    movlw   0xaa
+    movwf   i2cXmtBufPtrL
+
+    movlw   0x55
+    movwf   i2cRcvBufPtrH
+
+;debug mks end
+
+
 mainLoop:
 
     call    handleI2CCommand    ; checks for incoming command on I2C bus
@@ -485,6 +510,11 @@ mainLoop:
 ;
 
 setup:
+
+    banksel flags
+    clrf    flags
+    clrf    statusFlags
+    clrf    comErrorCnt
 
     call    setupClock      ; set system clock source and frequency
 
@@ -522,10 +552,6 @@ setup:
                             ; bit 0 = 1 :
     
 ;end of hardware configuration
-
-    banksel flags
-
-    clrf    flags
 	
 ; enable the interrupts
 
@@ -900,11 +926,11 @@ hcatl1:
 ;--------------------------------------------------------------------------------------------------
 ; getAllStatus
 ;
-; Places the flags byte, communication error count, and last A/D conversion value in a buffer and
-; transmits it back to the Master via I2C. Clock stretching is enabled so the bus will wait as
-; necessary between each byte.
+; Transmits various status, flags, and other values back to the Master via I2C. Clock stretching is
+; enabled so the bus will wait as necessary between each byte.
 ;
 ; The communication error count is cleared.
+; The maximum number of bytes in the A/D buffer variable is cleared.
 ;
 ; This function is done in the main code and not in interrupt code. It is expected that the A/D
 ; converter interrupt will occur one or more times during transmission of the peak data.
@@ -931,7 +957,7 @@ getAllStatus:
     ;debug mks
 
     movlw   0x44
-    movwf   flags
+    movwf   statusFlags
     movlw   0x45
     movwf   comErrorCnt
     movlw   0x46
@@ -953,6 +979,9 @@ getAllStatus:
     movf    flags,W
     movwi   FSR0++
 
+    movf    statusFlags,W
+    movwi   FSR0++
+
     movf    comErrorCnt,W
     movwi   FSR0++
 
@@ -962,15 +991,127 @@ getAllStatus:
     movf    adValue,W
     movwi   FSR0++
 
-    movlw   0xa5                        ; debug mks -- checksum -- need to compute actual value
+    movlw   0x55                        ; unused -- for future use
     movwi   FSR0++
 
+    movlw   0xaa                        ; unused -- for future use
+    movwi   FSR0++
+
+    movlw   0x5a                        ; unused -- for future use
+    movwi   FSR0++
+
+    movlw   .11                         ; number of data bytes in packet
+    movwf   scratch0
+
+    call    calcAndStoreCheckSumForI2CXmtBuf
+
+    ; clear appropriate error counts, flags, etc. to start tracking anew
+
+    banksel flags
     clrf    comErrorCnt
     clrf    maxADBufCnt
+    bcf     statusFlags,COM_ERROR
+    bcf     statusFlags,AD_OVERRUN
 
     goto sendI2CBuffer
 
 ; end getAllStatus
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; calcAndStoreCheckSumForI2CXmtBuf
+;
+; Calculates the checksum for a series of bytes in the i2cXmtBuf buffer, the address of which
+; should be in i2cXmtBufPtrH:L
+;
+; On Entry:
+;
+; scratch0 contains number of bytes in series
+; i2cXmtBufPtrH:i2cXmtBufPtrL contains address of the start of the buffer
+;
+; On Exit:
+;
+; The checksum will be stored at the end of the series.
+; FSR0 points to the location after the checksum.
+;
+
+calcAndStoreCheckSumForI2CXmtBuf:
+
+    banksel i2cXmtBufPtrH                   ; load FSR0 with buffer pointer
+    movf    i2cXmtBufPtrH, W            
+    movwf   FSR0H
+    movf    i2cXmtBufPtrL, W
+    movwf   FSR0L
+
+    goto    calculateAndStoreCheckSum
+
+; end calcAndStoreCheckSumForI2CXmtBuf
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; calculateAndStoreCheckSum
+;
+; Calculates the checksum for a series of bytes.
+;
+; On Entry:
+;
+; scratch0 contains number of bytes in series
+; FSR0 points to first byte in series.
+;
+; On Exit:
+;
+; The checksum will be stored at the end of the series.
+; FSR0 points to the location after the checksum.
+;
+
+calculateAndStoreCheckSum:
+
+    call    sumSeries                       ; add all bytes in the buffer
+
+    comf    WREG,W                          ; use two's complement to get checksum value
+    addlw   .1
+
+    movwi   FSR0++                          ; store the checksum at the end of the summed series
+
+    return
+
+; end calculateAndStoreCheckSum
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; sumSeries
+;
+; Calculates the sum of a series of bytes. Only the least significant byte of the sum is retained.
+;
+; On Entry:
+;
+; scratch0 contains number of bytes in series.
+; FSR0 points to first byte in series.
+;
+; On Exit:
+;
+; The least significant byte of the sum will be returned in WREG.
+; Z flag will be set if the LSB of the sum is zero.
+; FSR0 points to the location after the last byte summed.
+;
+
+sumSeries:
+
+    banksel scratch0
+
+    clrf    WREG
+
+sumSLoop:                       ; sum the series
+
+    addwf   INDF0,W
+    addfsr  INDF0,1
+
+    decfsz  scratch0,F
+    goto    sumSLoop
+
+    return
+
+; end sumSeries
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -980,6 +1121,10 @@ getAllStatus:
 ; sent will be controlled by the Master. If the Master requests more bytes than have been loaded
 ; into the buffer, the extra bytes sent will be whatever happens to be after the last valid byte
 ; in the buffer.
+;
+; On Entry:
+;
+; i2cXmtBufPtrH:i2cXmtBufPtrL contains address of the buffer to be tranw
 ;
 
 sendI2CBuffer:
@@ -1343,6 +1488,7 @@ receiveBytesFromI2C:
     clrf    scratch1                ; track number of bytes recorded
     clrf    scratch2                ; clear control flags
 
+    clrf    FSR0H
     movlw   scratch3                ; point to first byte of receive buffer
     movwf   FSR0L
 
