@@ -476,19 +476,6 @@ start:
 
     call    setup               ; preset variables and configure hardware
 
-;debug mks
-
-    banksel i2cXmtBufPtrL
-
-    movlw   0xaa
-    movwf   i2cXmtBufPtrL
-
-    movlw   0x55
-    movwf   i2cRcvBufPtrH
-
-;debug mks end
-
-
 mainLoop:
 
     call    handleI2CCommand    ; checks for incoming command on I2C bus
@@ -954,19 +941,6 @@ getAllStatus:
 
     banksel flags
 
-    ;debug mks
-
-    movlw   0x44
-    movwf   statusFlags
-    movlw   0x45
-    movwf   comErrorCnt
-    movlw   0x46
-    movwf   maxADBufCnt
-    movlw   0x47
-    movwf   adValue
-
-    ;debug mks end
-
     movf    slaveI2CAddress,W
     movwi   FSR0++
 
@@ -991,13 +965,13 @@ getAllStatus:
     movf    adValue,W
     movwi   FSR0++
 
-    movlw   0x55                        ; unused -- for future use
+    movlw   0x01                        ; unused -- for future use
     movwi   FSR0++
 
-    movlw   0xaa                        ; unused -- for future use
+    movlw   0x02                        ; unused -- for future use
     movwi   FSR0++
 
-    movlw   0x5a                        ; unused -- for future use
+    movlw   0x03                        ; unused -- for future use
     movwi   FSR0++
 
     movlw   .11                         ; number of data bytes in packet
