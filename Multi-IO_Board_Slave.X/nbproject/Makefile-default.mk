@@ -83,7 +83,7 @@ MP_LINKER_DEBUG_OPTION=
 # Rules for buildStep: assemble
 ifeq ($(TYPE_IMAGE), DEBUG_RUN)
 ${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.o: ../Multi_IO_A_Slave.asm  nbproject/Makefile-${CND_CONF}.mk
-	@${MKDIR} ${OBJECTDIR}/_ext/1472 
+	@${MKDIR} "${OBJECTDIR}/_ext/1472" 
 	@${RM} ${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.o.d 
 	@${RM} ${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.o 
 	@${FIXDEPS} dummy.d -e "${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.err" $(SILENT) -c ${MP_AS} $(MP_EXTRA_AS_PRE) -d__DEBUG -d__MPLAB_DEBUGGER_PK3=1 -q -p$(MP_PROCESSOR_OPTION)  -l\"${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.lst\" -e\"${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.err\" $(ASM_OPTIONS)   -o\"${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.o\" \"../Multi_IO_A_Slave.asm\" 
@@ -92,7 +92,7 @@ ${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.o: ../Multi_IO_A_Slave.asm  nbproject/Ma
 	
 else
 ${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.o: ../Multi_IO_A_Slave.asm  nbproject/Makefile-${CND_CONF}.mk
-	@${MKDIR} ${OBJECTDIR}/_ext/1472 
+	@${MKDIR} "${OBJECTDIR}/_ext/1472" 
 	@${RM} ${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.o.d 
 	@${RM} ${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.o 
 	@${FIXDEPS} dummy.d -e "${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.err" $(SILENT) -c ${MP_AS} $(MP_EXTRA_AS_PRE) -q -p$(MP_PROCESSOR_OPTION)  -l\"${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.lst\" -e\"${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.err\" $(ASM_OPTIONS)   -o\"${OBJECTDIR}/_ext/1472/Multi_IO_A_Slave.o\" \"../Multi_IO_A_Slave.asm\" 
