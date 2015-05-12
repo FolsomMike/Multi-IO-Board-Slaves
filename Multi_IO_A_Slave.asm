@@ -58,6 +58,103 @@
 ;    Sync Reset is monitored via RA0 using the IOC option. The Sync line is monitored via RC5
 ;    configured to count pulses with Timer 0. The Sync Reset pulse triggers a reset of the counter.
 ;
+; ----------------
+;
+; Sample Pre-Buffering
+;
+; The A/D converter interrupt is made as short as possible to allow for shortest latency for all
+; tasks. It simply stores the A/D value in a buffer along with the clock position at the time of
+; the sample and increments numPreSamples to reflect the number of samples in the buffer.
+;
+; The main code extracts the samples and processes them, decrementing numPreSamples. It also
+; records the maximum number of pre-samples ever stored at one time in maxNumPreSamples for
+; debugging purposes to check for buffer overruns.
+;
+; samplePreBuf buffer format:
+;
+; pre-sample 1
+; pre-sample clock 1
+; pre-sample 2
+; pre-sample clock 2
+; ...
+;
+; The samples and clock positions are interleaved in samplePreBuf
+;
+; ----------------
+;
+; Sample Buffering
+;
+; A circular buffer is used to capture the last 80 A/D samples. To save time, three buffers are
+; used so that data never needs to be copied from the active catch buffer to a peak buffer and
+; from there to a transmit buffer: sampleBuf1, sampleBuf2, sampleBuf3.
+;
+; There are three buffer pointers used: catchBuf, peakBuf, xmtBuf. Each pointer is assigned to
+; one of the sampleBuf* buffers. When a peak is detected, peakBufFinishCnt is set to 40 (half the
+; buffer length) and is thereafter counted down for each sample added to the buffer.
+;
+; When peakBufFinishCnt reaches 0, 40 samples have been saved after the peak. Thus there will be 40
+; samples before and 40 samples after the peak in the buffer. At that point, buffer location of the
+; last sample is stored in peakBufFinishCnt (the top bit should be ignored as it is part of the
+; bank selection bits) - the bottom 7 bits represent the value 0~80 where the last sample was
+; stored. From this, it can determined where the peak value must be in the buffer (40 bytes prior)
+; and the data can be rotated to center the peak.
+;
+; At that point, the catchBuf and peakBuf pointer values are swapped, so new data is now added to
+; a different buffer and the peak data stored in the first catch buffer is preserved. Every time
+; a new peak is detected, the catchBuf and peakBuf pointers are swapped so that the previous peak
+; is overwritten with new data while the last peak is always stored in the buffer pointed to by
+; peakBuf.
+;
+; When a request is made for peak data transmission to the Master PIC, the peakBuf and xmtBuf
+; pointer values are swapped. Thus the current peak will be preserved and new peaks will be stored
+; in a different buffer. Future swaps between catchBuf and peakBuf will involve the new buffer
+; leaving the old one alone while it is being transmitted.
+;
+; Thus the three buffers are rotated amongst the three pointers allowing data to be preserved
+; without ever having to copy it. The pointers are not reset to the start of the buffer on
+; swapping, so data collection starts again with whatever the last location was. The important
+; location is the 40th sample after the peak, as that dictates where the peak must lie in the
+; buffer.
+;
+; Buffer Swapping Process:
+;
+; collect samples in catchBuf
+; when peak detected:
+;   set peakBufFinishCnt to (buffer length)/2 and begin counting down with each sample
+; when peakBufFinishCnt reaches 0:
+;   swap catchBuf and peakBuf and set peakFlags.NEW_DATA flag
+; if new peak found before peakBufFinishCnt reaches 0, simple restart counter
+;
+; when Peak Data transmit is requested, check peakFlags.NEW_DATA flag
+; if not set, return whatever data is in xmtBuf along with unset flag to alert that data is old
+; if set, swap peakBuf and xmtBuf, transmit xmtBuf, clear peakFlags.NEW_DATA flag
+;
+; ----------------
+;
+; Clock Map Buffering
+;
+; Clock Map buffer handling is similar to the Sample Buffering described above, but only two
+; buffers are needed: a catch buffer and a xmt buffer.
+;
+; Two buffers are used: mapBuf1 and mapBuf2.
+;
+; There are two buffer pointers used: mapCatchBuf and mapXmtBuf. Each pointer is assigned to
+; one of the mapBuf* buffers.
+;
+; When a request is made for peak data transmission to the Master PIC, the mapCatchBuf and
+; mapXmtBuf pointer values are swapped. Thus the current data will be preserved and new data will
+; be stored in a different buffer.
+;
+; Unlike the Sample Buffer, map data is always valid regardless of the state of the
+; peakFlags.NEW_DATA flag.
+;
+; Buffer Swapping Process:
+;
+; collect samples in mapCatchBuf
+;
+; when Peak Data transmit is requested:
+;   swap mapCatchBuf and mapXmtBuf, transmit mapXmtBuf
+;
 ;--------------------------------------------------------------------------------------------------
 ; Notes on PCLATH
 ;
@@ -153,14 +250,14 @@
 ; COMMENT OUT "#define debug" line before using code in system.
 ; Defining debug will insert code which simplifies simulation by skipping code which waits on
 ; stimulus and performing various other actions which make the simulation run properly.
-; Search for "ifdef debug" to find all examples of such code.
+; Search for "debug_on" to find all examples of such code.
 
-;#define debug 1     ; set debug testing "on"
+;#define debug_on 1     ; set debug testing "on"
 
 ; version of this software
 
 SOFTWARE_VERSION_MSB    EQU 0x01
-SOFTWARE_VERSION_LSB    EQU 0x01
+SOFTWARE_VERSION_LSB    EQU 0x02
 
 ; upper nibble of I2C address for all Slave PICs is 1110b
 ; 3 lsbs will be set to match the address inputs on each Slave PIC
@@ -170,16 +267,20 @@ I2C_SLAVE_ADDR_UPPER            EQU     b'11100000'
 
 ; Master PIC to Slave PIC Commands -- sent by Master to Slaves via I2C to trigger actions
 
-PIC_NO_ACTION_CMD               EQU 0x00
-PIC_GET_ALL_STATUS_CMD          EQU 0x01
-PIC_START_CMD                   EQU 0x02
-PIC_GET_PEAK_PKT_CMD            EQU 0X03
-PIC_ENABLE_POT_CMD              EQU 0x04
-PIC_DISABLE_POT_CMD             EQU 0x05
+PIC_NO_ACTION_CMD               EQU .0
+PIC_ACK_CMD                     EQU .1
+PIC_GET_ALL_STATUS_CMD          EQU .2
+PIC_START_CMD                   EQU .3
+PIC_GET_PEAK_PKT_CMD            EQU .4
+PIC_ENABLE_POT_CMD              EQU .5
+PIC_DISABLE_POT_CMD             EQU .6
 
 I2C_RCV_BUF_LEN      EQU .5
-
 I2C_XMT_BUF_LEN      EQU .20
+
+MAP_BUF_LEN         EQU .24
+SAMPLE_PREBUF_LEN   EQU .60             ; NOTE: this must always be an even number!
+SAMPLE_BUF_LEN      EQU .80
 
 ; end of Defines
 ;--------------------------------------------------------------------------------------------------
@@ -189,7 +290,9 @@ I2C_XMT_BUF_LEN      EQU .20
 
 	LIST p = PIC16F1459	;select the processor
 
-    errorlevel  -306 ; Suppresses Message[306] Crossing page boundary -- ensure page bits are set.
+    ;errorlevel  -306 ; Suppresses Message[306] Crossing page boundary -- ensure page bits are set.
+        ; the above is often used if a lot of calls/gotos across page boundaries are required as
+        ; then the warning is useless as it lists each crossing even if it is properly done
 
     errorLevel  -302 ; Suppresses Message[302] Register in operand not in bank 0.
 
@@ -315,8 +418,8 @@ AD_OVERRUN          EQU 1
 
 ; ADCON0 bits
 ; bit 7 = 0 : unimplemented
-; bit 6 = 0 : bits 6-2 : analog input channel
-; bit 5 = 1 :    01001 -> AN9
+; bit 6 = 0 : bits 6-2 : analog input channel - 01001 -> AN9
+; bit 5 = 1 :    
 ; bit 4 = 0 :
 ; bit 3 = 0 :
 ; bit 2 = 1 :
@@ -325,7 +428,7 @@ AD_OVERRUN          EQU 1
 
 ; A/D convertor selection for analog input channel/pin: AN9 on pin RC7
 
-AD_START_CODE    EQU     b'00100101'
+AD_CHANNEL_CODE    EQU     b'00100101'
 
 ; end of Software Definitions
 ;--------------------------------------------------------------------------------------------------
@@ -365,17 +468,6 @@ AD_START_CODE    EQU     b'00100101'
 
     comErrorCnt             ; tracks the number of communication errors
 
-    maxADBufCnt             ; maximum number of A/D values stored in buffer at any one time
-                            ; should never be bigger than the size of the buffer, otherwise it
-                            ; is an overrun condition
-
-    adValue                 ; last A/D conversion value
-
-    adTrigger               ; 0 = not ready; 1 = handle A/D input
-                            ; set by Timer0 interrupt to trigger the next A/D conversion
-                            ; cleared by handleADToLEDArrays
-                            ; an entire byte is used to avoid read-modify-write issues between the
-                            ; main thread and the interrupt thread
     masterCmd               ; command byte received from Master via I2C bus
 
     scratch0                ; these can be used by any function
@@ -418,6 +510,130 @@ AD_START_CODE    EQU     b'00100101'
  cblock 0x120                ; starting address
 
 	block1PlaceHolder
+
+ endc
+
+;-----------------
+
+; Assign A/D related variables, the Peak Data variables, and the Clock Peak Map in RAM - Bank 6
+; this bank has 80 bytes of free space
+
+ cblock 0x320               ; starting address
+
+    peakFlags               ; bit 0: 0 = no new data, 1 = new data ready
+                            ; bit 1: 0 =
+                            ; bit 2: 0 =
+                            ; bit 3: 0 =
+                            ; bit 4: 0 =
+                            ; bit 5: 0 =
+							; bit 6: 0 =
+							; bit 7: 0 =
+
+    maxPeak
+    maxPeakClk
+    maxPeakLoc
+    minPeak
+    minPeakClk
+    minPeakLoc
+
+    maxPeakSnap
+    maxPeakClkSnap
+    maxPeakLocSnap
+    minPeakSnap
+    minPeakClkSnap
+    minPeakLocSnap
+
+    maxABSPeak              ; maximum absolute value
+
+    peakBufFinishCnt
+    peakBufLastLoc
+
+    pbScratch0
+    pbScratch1
+    pbScratch2
+    pbScratch3
+    pbScratch4
+
+    catchBufH
+    catchBufL
+    peakBufH
+    peakBufL
+    xmtBufH
+    xmtBufL
+
+    mapCatchBufH
+    mapCatchBufL
+    mapXmtBufH
+    mapXmtBufL
+
+ endc
+
+;-----------------
+
+; Assign A/D Clock Peak Map in RAM - Bank 7
+; this bank has 80 bytes of free space
+
+ cblock 0x3a0               ; starting address
+
+    mapBuf1:MAP_BUF_LEN
+    mapBuf2:MAP_BUF_LEN
+
+ endc
+
+;-----------------
+
+; Assign A/D sampling pre-buffer and related variables in RAM - Bank 8
+;   see notes at top of file "Sample Pre-Buffering"
+; this bank has 80 bytes of free space
+
+ cblock 0x420               ; starting address
+
+    lastADSample            ; the last A/D sample recorded
+    lastSampleClk           ; clock position of the last A/D sample recorded
+    lastSampleLoc           ; linear location of the last A/D sample recorded
+    numPreSamples
+    maxNumPreSamples        ; maximum number of A/D values stored in pre-buffer at any one time
+                            ; should never be bigger than the size of the buffer, otherwise it
+                            ; is an overrun condition
+    inPreBufH               ; insertion pointer for sample pre-buffer
+    inPreBufL
+    outPreBufH              ; extraction pointer for sample pre-buffer
+    outPreBufL
+
+    samplePreBuf:SAMPLE_PREBUF_LEN
+
+ endc
+
+;-----------------
+
+; Assign A/D Sample Buffer 1 in RAM - Bank 9 - see notes at top of file "Sample Buffering"
+; this bank has 80 bytes of free space
+
+ cblock 0x4a0                ; starting address
+
+    sampleBuf1:SAMPLE_BUF_LEN
+
+ endc
+
+;-----------------
+
+; Assign A/D Sample Buffer 2 in RAM - Bank 10 - see notes at top of file "Sample Buffering"
+; this bank has 80 bytes of free space
+
+ cblock 0x520                ; starting address
+
+    sampleBuf2:SAMPLE_BUF_LEN
+
+ endc
+
+;-----------------
+
+; Assign A/D Sample Buffer 3 in RAM - Bank 11 - see notes at top of file "Sample Buffering"
+; this bank has 80 bytes of free space
+
+ cblock 0x5a0                ; starting address
+
+    sampleBuf3:SAMPLE_BUF_LEN
 
  endc
 
@@ -480,10 +696,10 @@ mainLoop:
 
     call    handleI2CCommand    ; checks for incoming command on I2C bus
 
-    banksel flags
-
-;    btfsc   flags,HANDLE_LED_ARRAYS ; display A/D inputs on LED arrays
-;    call    handleADToLEDArrays
+    banksel numPreSamples       ; process if interrupt routine has added samples to the pre-buffer
+    movf    numPreSamples,F
+    btfss   STATUS,Z
+    call    processADSamples
 
     goto    mainLoop
     
@@ -503,19 +719,25 @@ setup:
     clrf    statusFlags
     clrf    comErrorCnt
 
-    call    setupClock      ; set system clock source and frequency
+    call    setupClock          ; set system clock source and frequency
 
-    call    setupPortA      ; prepare Port A for I/O
+    call    setupPortA          ; prepare Port A for I/O
 
-    call    setupPortB      ; prepare Port B for I/O
+    call    setupPortB          ; prepare Port B for I/O
 
-    call    setupPortC      ; prepare Port C  for I/O
+    call    setupPortC          ; prepare Port C  for I/O
+
+    call    setupTimer0         ; Timer 0 counts pulses on RC5 input
+
+    call    setupIntOnChange    ; sets up interrupt-on-change for appropriate inputs
 
     call    initializeOutputs
 
     call    parseSlaveIC2Address
 
     call    setupI2CSlave7BitMode ; prepare the I2C serial bus for use
+
+    call    setupADVars     ; setup A/D sampling variables and pointers
 
     call    setupADConverter ; prepare A/D converter for use
 
@@ -527,13 +749,13 @@ setup:
     clrf    INTCON          ; disable all interrupts
 
     banksel OPTION_REG
-    movlw   0x57
-    movwf   OPTION_REG      ; Option Register = 0x57   0101 0111 b
+    movlw   0x7f
+    movwf   OPTION_REG      ; Option Register = 0x7f   0111 1111 b
                             ; bit 7 = 0 : weak pull-ups are enabled by individual port latch values
                             ; bit 6 = 1 : interrupt on rising edge
-                            ; bit 5 = 0 : TOCS ~ Timer 0 run by internal instruction cycle clock (CLKOUT ~ Fosc/4)
-                            ; bit 4 = 1 : TOSE ~ Timer 0 increment on high-to-low transition on RA4/T0CKI/CMP2 pin (not applicable here)
-							; bit 3 = 0 : PSA ~ Prescaler assigned to Timer0
+                            ; bit 5 = 1 : TMR0CS ~ Timer 0 increments on TCK0I pin input
+                            ; bit 4 = 1 : TMR0SE ~ Timer 0 increment on high-to-low transition on RA4/T0CKI/CMP2 pin
+                            ; bit 3 = 1 : PSA ~ Prescaler not assigned to Timer0
                             ; bit 2 = 1 : Bits 2:0 control prescaler:
                             ; bit 1 = 1 :    111 = 1:256 scaling for Timer0 (if assigned to Timer0)
                             ; bit 0 = 1 :
@@ -542,9 +764,14 @@ setup:
 	
 ; enable the interrupts
 
-    bsf     INTCON,PEIE     ; enable peripheral interrupts (Timer0 is a peripheral)
-    bsf     INTCON,T0IE     ; enable TMR0 interrupts
-    bsf     INTCON,GIE      ; enable all interrupts
+    banksel PIE1            ; enable A/D interrupts
+    bsf     PIE1, ADIE
+
+    bsf     INTCON,PEIE     ; enable peripheral interrupts (Timers, A/D converter, etc.)
+
+    bsf     INTCON,IOCIE    ; enable interrupt-on-change for enabled inputs
+
+;debug mks -- put this back in    bsf     INTCON,GIE      ; enable all interrupts
 
     return
 
@@ -753,6 +980,79 @@ setupPortC:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
+; setupTimer0
+;
+; Sets up Timer 0 as a counter triggered by pulses on RC5/T0CKI.
+;
+; For this program, that input is the SYNC pulse. Each pulse marks the start of a new clock
+; position segment. The counter is reset when a RESYNC pulse is received on an interrupt pin. Thus
+; TMR0 will reset to 0 at the TDC (RESYNC) pulse and then count through the clock positions.
+;
+; NOTE:
+;
+; In the 2012 DS41639A PIC16(L)F1454/5/9 Data Sheet, it seems to imply that the TCK0I signal must
+; be synchronized to the clock by external means. It then shows a synchronizing block internally.
+; It seems that the input is synchronized by the PIC itself. The text below from the manual shows
+; the likely true meaning ([original]->[corrected]:
+;
+; When in 8-Bit Counter mode, the incrementing edge on the T0CKI pin [must be]->[is] synchronized
+; to the instruction clock. Synchronization [can be]->[is] accomplished by sampling the prescaler
+; output on the Q2 and Q4 cycles of the instruction clock.
+;
+; Even though it says specifically that the prescaler output is sampled, it also shows to sample
+; the non-prescaled signal when the prescaler is disabled.
+;
+
+setupTimer0:
+
+; OPTION_REG configured in setup function:
+;  PSA bit = 1 ~ prescaler NOT assigned to TMR0 (no prescaler used)
+;  TMR0CS = 1 ~ increments on transition of T0CKI pin
+;  TMR0SE = 1 ~ count increments on high-to-low transition on T0CKI pin
+;  PSA = 111b ~ prescaler of 1:256 (not used since prescaler not assigned to TMR0)
+
+
+    banksel ANSELC                      ; pin is digital I/O
+    bcf     ANSELC,RC7
+
+    banksel TRISC                       ; pin is input
+    bsf     TRISC,RC7
+
+    banksel TMR0                        ; clear the counter
+    clrf    TMR0
+
+    return
+
+; end of setupTimer0
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; setupIntOnChange
+;
+; Sets up interrupt-on-change for RA0 which is the SYNC_RESET input which resets Timer 0 back
+; to zero each time RA0 has a high-to-low transition.
+;
+
+setupIntOnChange:
+
+    banksel ANSELA                      ; pin is digital I/O
+    bcf ANSELA,RA0
+
+    banksel TRISA                       ; pin is input
+    bsf TRISA,RA0
+
+    banksel IOCAP                       ; disable interrupt on low-to-high
+    bcf IOCAP,IOCAP0
+
+    banksel IOCAN                       ; enable interrupt on high-to-low
+    bsf IOCAN,IOCAN0
+
+    return
+
+; end of setupIntOnChange
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
 ; setupI2CSlave7BitMode
 ;
 ; Sets the MASTER SYNCHRONOUS SERIAL PORT (MSSP) MODULE to the I2C Slave mode using the 7 bit
@@ -832,17 +1132,19 @@ setupADConverter:
 
     ; input channel/pin: AN9/RC7
 
-    banksel TRISA
-    bsf     TRISA, AD_AN9                       ;set I/O pin to input
+    banksel TRISC
+    bsf     TRISC, AD_AN9                       ;set I/O pin to input
 
-    banksel ANSELA
-    bsf     ANSELA, AD_AN9                      ;set I/O pin to analog mode
+    banksel ANSELC
+    bsf     ANSELC, AD_AN9                      ;set I/O pin to analog mode
 
-    ; turn on A/D module and begin conversion
+    ; turn on A/D module and select channel
 
     banksel ADCON0
-    movlw   AD_START_CODE
+    movlw   AD_CHANNEL_CODE
     movwf   ADCON0
+
+    bsf     ADCON0,ADGO                         ;start first A/D conversion
 
     return
 
@@ -850,64 +1152,185 @@ setupADConverter:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; doADConversion
+; processADSamples
 ;
-; Starts the A/D convertor, waits until it finishes, then processes the value. This method is a
-; simple, crude, way of obtaining an A/D value. It will only execute when the adTrigger:0 flag has
-; been set. This is usually done by a timer interrupt.
+; Processes all A/D samples which have been placed in the pre-buffer by the A/D interrupt routine
+; since the last time this method was called.
 ;
-; If the adTrigger flag has not been set by a Timerx interrupt, function returns immediately.
-; If flag is set, it is cleared and the A/D processed.
+; Each value is converted from unsigned to signed such that 0V input to the board is at value of 0.
+; The absolute value is then compared with the value already in the map buffer at the same clock
+; position as the new sample. If the new sample is greater, the old value is replaced.
 ;
-; The frequency of the adTrigger flag being set should be slow enough to allow the sampling circuit
-; to settle between processing.
+; For peak capture, the max and min values of the new sample replace the old peak values if the new
+; is greater/less than the old peaks. The clock positions for those peaks are stored as well.
+;
+; If a new peak is detected (absolute value) a count down counter is started. When that reaches 0,
+; the peaks and and clocks are stored and the catch buffer and peak buffer are switched so that the
+; buffer for the stored peak is preserved (now in the peak buffer). There is only one peak buffer;
+; it contains the data for the highest absolute value peak, either negative or positive.
+; See notes at the top of the page for more details.
+;
+; Sample Value Sign
+;
+; The raw value from the A/D is unsigned 0-255 where 0 is 0V and 255 is Vcc.
+; The board is designed so that 0V input is actually at Vcc/2 at the A/D input.
+; The A/D value can be converted to signed by simply flipping bit 7, such that -128 is 0V and
+; +127 is Vcc at the A/D input.
+;
+; NOTE: before converting, force value of 0 to value of 1. This has the effect after the conversion
+;       of limiting the negative swing to -127, which can be converted to +127 with absolute value.
+;       When trying to get abs value of -128 (0 before the conversion), it returns -128 as there is
+;       no +128 in an 8 bit value.
+;
+; In some cases the value is left unsigned as it is easy to check for min/max peaks as there is no
+; sign to worry about.
 ;
 
-doADConversion:
+processADSamples:
 
-    ; do nothing if adTrigger bit 0 is not set
+    banksel lastADSample
+    movf    outPreBufH,W         ; set pointer to current pre-buffer extraction location
+    movwf   FSR0H
+    movf    outPreBufL,W
+    movwf   FSR0L
 
-    banksel adTrigger
-    btfss   adTrigger,0
+    banksel peakFlags
+    movf    catchBufH,W         ; set pointer to current catch buffer location
+    movwf   FSR1H
+    movf    catchBufL,W
+    movwf   FSR1L
+
+    banksel numPreSamples       ; store the number of samples in pbScratch0
+    movf    numPreSamples,W
+    banksel pbScratch0
+    movwf   pbScratch0
+
+    ; transfer the new samples in pre-buffer to the catch buffer
+
+padsLoop1:
+
+    moviw   FSR0++              ; move sample between buffers
+    movwi   FSR1++
+
+    movwf   pbScratch1          ; store the raw value temporarily
+
+    btfsc   STATUS,Z            ; limit bottom end to 1 (-127 as a signed value) see notes above
+    incf    WREG,F
+
+    xorlw   0x80                ; flip bit 7 to convert to signed value with 0 at center voltage
+
+    ; get absolute value of the sample
+
+    btfss   WREG,7              ; check for positive value
+    goto    padsPosNum          ; don't flip if positive
+
+    comf    WREG,W              ; flip value to positive
+    addlw   .1
+
+    movwf   pbScratch2          ; store the sample abs value temporarily
+
+padsPosNum:
+
+    movf    FSR1H,W             ; store FSR1 temporarily
+    movwf   pbScratch3
+    movf    FSR1L,W
+    movwf   pbScratch4
+
+    movf    mapCatchBufH,W      ; add clock position to map start to get address of the clock pos
+    movwf   FSR1H               ;   in the map buffer
+    movf    mapCatchBufL,W      
+    addwf   INDF0,W             ; add clock position (leave FSR0 pointing at clock value)
+    movwf   FSR1L
+
+    movf    pbScratch2,W        ; compare abs value sample with value already in map
+    subwf   INDF1,W
+    btfss   STATUS,C            ; C = 1 => W > f, so store new value in map
+    goto    padsNewLTEQMap      ; new value <= old value, so leave old value
+
+    movf    pbScratch2,W        ; store new value in map buffer
+    movwf   INDF1
+
+padsNewLTEQMap:
+
+    subwf   maxABSPeak,W        ; compare abs value sample with current abs value peak
+    btfss   STATUS,C            ; C = 1 => W > f, so store new value in peak
+    goto    padsNewLTEQAbsPeak  ; new value <= old value, so leave old value
+
+    movf    pbScratch2,W        ; store new value in abs value peak
+    movwf   maxABSPeak
+
+    movlw   (SAMPLE_BUF_LEN / .2)   ; fill in half of buffer after peak so it will be centered
+    movwf   peakBufFinishCnt
+
+padsNewLTEQAbsPeak:
+
+    movf    pbScratch1,W        ; get raw sample for max peak detection
+    subwf   maxPeak,W           ; compare new sample with max peak
+    btfss   STATUS,C            ; C=1 => W>f, so store new value in peak
+    goto    padsNewLTEQMaxPeak
+
+    movf    pbScratch1,W        ; store new sample as peak
+    movwf   maxPeak
+    moviw   FSR0++
+    movwf   maxPeakClk          ; store clock position of peak (location not yet implemented)
+
+    goto    checkPeakBufFinishCnt
+
+padsNewLTEQMaxPeak:
+
+    movf    pbScratch1,W        ; get raw sample for min peak detection
+    subwf   maxPeak,W           ; compare new sample with min peak
+    btfsc   STATUS,C            ; C=0 => W<=f, so store new value in peak
+    goto    checkPeakBufFinishCnt
+
+    movf    pbScratch1,W
+    movwf   minPeak
+    moviw   FSR0++
+    movwf   minPeakClk          ; store clock position of peak (location not yet implemented)
+
+checkPeakBufFinishCnt:
+
+    ; decrement the peak buffer finish counter if it is not zero
+    ; when it reaches zero, second half of buffer has been filled after peak, so buffers are
+    ; swapped to preserve the buffer
+
+    movf    checkPeakBufFinishCnt,F     ;if counter already zero, ignore
+    btfsc   STATUS,Z
+    goto    bufNotFinished
+
+    decfsz  checkPeakBufFinishCnt,F     ;count down
+    goto    bufNotFinished
+
+    ; second half of buffer filled after last peak, so preserve peak data
+    call    preservePeakData
+
+bufNotFinished:
+
+    movf    pbScratch3,W        ; restore FSR1
+    movwf   FSR1H
+    movf    pbScratch4,W
+    movwf   FSR1L
+
+    decfsz  pbScratch0,F        ; loop until all samples in pre-buffer processed
+    goto    padsLoop1
+
+    ; store the updated pointers
+
+    banksel lastADSample
+    movf    FSR0H,W
+    movwf   outPreBufH
+    movf    FSR0L,W
+    movwf   outPreBufL
+
+    banksel peakFlags
+    movf    FSR1H,W
+    movwf   catchBufH
+    movf    FSR1L,W
+    movwf   catchBufL
+
     return
 
-    clrf    adTrigger           ; clear flag so interrupt routine can set it again next period
-
-    goto    getADValue
-
-; end of doADConversion
-;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
-; getADValue
-;
-; Starts the A/D convertor, waits until it finishes, then processes the value. This method is a
-; simple, crude, way of obtaining an A/D value.
-;
-
-getADValue:
-
-    banksel ADCON0
-    bsf     ADCON0,ADGO                 ;start conversion
-
-hcatl1:
-    btfsc   ADCON0,ADGO                 ;loop until conversion done
-    goto    hcatl1
-
-    ; Store the value from ADRESH to scratch0
-    ; It is assumed that the A/D value is left justified, thus the upper 8 bits will be used
-    ; and the lower 2 bits will be discarded.
-
-    banksel ADRESH              ;read upper 8 bits of result
-    movf    ADRESH,W            ; (result is left justified so this gets
-                                ;  the upper 8 bits, ignoring the lsbs)
-
-    banksel scratch0
-    movwf   scratch0            ; store the A/D value
-
-    return
-
-; end of getADValue
+; end of processADSamples
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -954,16 +1377,24 @@ getAllStatus:
     movwi   FSR0++
 
     movf    statusFlags,W
+    bcf     statusFlags,COM_ERROR
+    bcf     statusFlags,AD_OVERRUN
     movwi   FSR0++
 
     movf    comErrorCnt,W
+    clrf    comErrorCnt
     movwi   FSR0++
 
-    movf    maxADBufCnt,W
+    banksel lastADSample
+
+    movf    maxNumPreSamples,W
+    clrf    maxNumPreSamples
     movwi   FSR0++
 
-    movf    adValue,W
+    movf    lastADSample,W
     movwi   FSR0++
+
+    banksel flags
 
     movlw   0x01                        ; unused -- for future use
     movwi   FSR0++
@@ -978,14 +1409,6 @@ getAllStatus:
     movwf   scratch0
 
     call    calcAndStoreCheckSumForI2CXmtBuf
-
-    ; clear appropriate error counts, flags, etc. to start tracking anew
-
-    banksel flags
-    clrf    comErrorCnt
-    clrf    maxADBufCnt
-    bcf     statusFlags,COM_ERROR
-    bcf     statusFlags,AD_OVERRUN
 
     goto sendI2CBuffer
 
@@ -1198,6 +1621,9 @@ disableDigitalPot:
 ; is received. That allows this method to be checked in the normal thread instead of by an
 ; interrupt as any response delays are not a problem as the transmission is halted.
 ;
+; NOTE: I2C reception does not have to be performed in an interrupt routine in this program because
+; it is set up to halt the bus until the code has a chance to respond.
+;
 
 handleI2CCommand:
 
@@ -1318,82 +1744,6 @@ handleI2CTransmit:
     return
 
 ; end handleI2CTransmit
-;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
-; setPWMFromI2C
-;
-; Sets the registers controlling the PWM cutting current pulse control with values received via
-; the I2C bus.
-;
-; The data bytes from the master should be:
-;
-;    pwmDutyCycleHiByte      ; cutting current pulse controller duty cycle time
-;    pwmDutyCycleLoByte
-;    pwmPeriod               ; cutting current pulse controller period time
-;    pwmPolarity             ; polarity of the PWM output -- only lsb used
-;    pwmCheckSum             ; used to verify PWM values read from eeprom
-;
-; If the checksum does not validate, the PWM registers are not changed.
-;
-; The value of 1 is added to the checksum to prevent cases where the values are read as all zeroes
-; in error and would match the checksum of zero.
-;
-
-setPWMFromI2C:
-
-    movlw   .5                      ; store 2 bytes from I2C
-    call    receiveBytesFromI2C
-
-    ; validate the checksum
-
-    banksel scratch3
-
-    clrw                            ; calculate the checksum for all PWM values
-    addwf   scratch3,W
-    addwf   scratch4,W
-    addwf   scratch5,W
-    addwf   scratch6,W
-    addlw   1                       ; see note in function header
-
-    subwf   scratch7,W              ; compare calculated checksum with that read from I2C
-    btfss   STATUS,Z
-    return                          ; zero flag clear, checksum NOT matched, exit
-
-    ; checksum matched -- apply values
-
-    ; set the polarity of the PWM output
-
-    banksel scratch6
-    movf    scratch6,W          ; byte read from I2C bus
-
-    banksel PWM1CON
-    bcf     PWM1CON,PWM1POL     ; clear polarity bit
-    btfsc   WREG,0
-    bsf     PWM1CON,PWM1POL     ; set polarity bit if bit 0 of polarity byte is set
-
-    ; set the PWM cycle period
-
-    banksel scratch5
-    movf    scratch5,W          ; byte read from I2C bus
-    banksel PR2                 ; period of the cycle
-    movwf   PR2
-
-    ; set the PWM duty cycle
-
-    banksel scratch0
-
-    movf    scratch4,W          ; set up low byte of value
-    movwf   scratch1
-
-    movf    scratch3,W          ; set up high byte of value
-    movwf   scratch2
-
-    ;call    setPWM1DC           ; set value of PWM1DCH and PWM1DCH duty cycle time registers
-
-    return
-
-; end setPWMFromI2C
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -1547,7 +1897,7 @@ clearSSP1IF:
 
 waitForSSP1IFHigh:
 
-    ifdef debug       ; if debugging, don't wait for interrupt to be set high as the MSSP is not
+    ifdef debug_on    ; if debugging, don't wait for interrupt to be set high as the MSSP is not
     return            ; simulated by the IDE
     endif
 
@@ -1576,7 +1926,7 @@ wfsh1:
 
 waitForSSP1IFHighOrStop:
 
-    ifdef debug       ; if debugging, don't wait for interrupt to be set high as the MSSP is not
+    ifdef debug_on              ; if debugging, don't wait for interrupt to be set high as the MSSP is not
     goto  wfshosByteReceived    ; simulated by the IDE
     endif
 
@@ -1721,8 +2071,13 @@ clearWCOL:
 
 handleInterrupt:
 
-	btfsc 	INTCON,T0IF     		; Timer0 overflow interrupt?
-	goto 	handleTimer0Interrupt	; YES, so process Timer0
+    banksel PIR1
+	btfsc 	PIR1,ADIF               ; A/D sample ready?
+	goto 	handleADInterrupt       ; YES, so process
+
+    banksel INTCON
+    btfsc   INTCON,IOCIF            ; transition detected on an input pin?
+	goto 	handleIntOnChange       ; YES, so process
 
 INT_ERROR_LP1:		        		; NO, do error recovery
 	;GOTO INT_ERROR_LP1      		; This is the trap if you enter the ISR
@@ -1734,32 +2089,94 @@ INT_ERROR_LP1:		        		; NO, do error recovery
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; handleTimer0Interrupt
+; handleIntOnChange
 ;
-; This function is called when the Timer 0 register overflows.
-;
-; The prescaler is set to 1:256.
-; 16 Mhz Fosc = 4 Mhz instruction clock (CLKOUT)
-; 4,000,000 Hz / 256 = 15,625 Hz;  15,625 Hz / 156 = 100 Hz
-; Interrupt needed every 156 counts of TMR0 -- set to 255-156.
-;
-; Interrupt triggered when 8 bit TMR0 register overflows, so subtract desired number of increments
-; between interrupts from 255 for value to store in register.
+; This function is called when an input changes state on an I/O pin with interrupt-on-change
+; enabled.
 ;
 ; NOTE NOTE NOTE
 ; It is important to use no (or very few) subroutine calls.  The stack is only 8 deep and
 ; it is very bad for the interrupt routine to use it.
 ;
 
-handleTimer0Interrupt:
+handleIntOnChange:
 
-	bcf 	INTCON,TMR0IF     ; clear the Timer0 overflow interrupt flag
+    banksel IOCAF
+	btfss 	IOCAF,IOCAF0            ; transition detected on RA0?
+	goto    hiocExit                ; NO, so do nothing
 
-    ; reload the timer -- see notes in function header
+    banksel TMR0                    ; clear the counter (resets to clock position 0)
+    clrf    TMR0
 
-    movlw   (.255 - .156)
-    banksel TMR0
-    movwf   TMR0
+hiocExit:
+
+    ; clear all interrupt flags which were set are cleared
+    ; this method is explained in the manual
+    ; MAKE SURE ALL FLAGS CHECKED AND HANDLED BEFORE DOING THIS
+
+    banksel IOCAF
+    movlw   0xff
+    xorwf   IOCAF, W
+    andwf   IOCAF, F
+
+	retfie                  ; return and enable interrupts
+
+; end of handleIntOnChange
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; handleADInterrupt
+;
+; This function is called when a sample is ready in the A/D converter.
+;
+; The sample is stored in samplePreBuffer along with the clock position at the time the sample
+; was stored. The next conversion is started.
+;
+; On Entry:
+;
+; bank register should be set to PIR1
+;
+; NOTE NOTE NOTE
+; It is important to use no (or very few) subroutine calls.  The stack is only 8 deep and
+; it is very bad for the interrupt routine to use it.
+;
+
+handleADInterrupt:
+
+	bcf 	PIR1,ADIF           ; clear the interrupt flag
+
+    banksel ADRESH              ; get A/D sample
+    movf    ADRESH,W            ; read upper 8 bits of result
+                                ; (result is left justified so this gets
+                                ;  the upper 8 bits, ignoring the 2 lsbs in ADRESL)
+
+    bsf     ADCON0,ADGO         ;start next A/D conversion
+
+    banksel lastADSample        ; store the A/D value
+    movwf   lastADSample
+
+    banksel TMR0                ; store the current clock position
+    movf    TMR0,W
+    banksel lastSampleClk
+    movwf   lastSampleClk
+
+    ; store sample in the pre-buffer
+
+    movf    inPreBufH,W         ; set pointer to current pre-buffer insertion location
+    movwf   FSR0H
+    movf    inPreBufL,W
+    movwf   FSR0L
+
+    ; store the sample and clock
+
+    movf    lastADSample,W
+    movwi   FSR0++
+
+    movf    lastSampleClk,W
+    movwi   FSR0++
+
+    incf    numPreSamples,F
+
 
 ;debug mks -- output a pulse to verify the timer0 period
     banksel LATB
@@ -1767,15 +2184,19 @@ handleTimer0Interrupt:
     bcf     LATB, RB7
 ;debug mks end
 
-    ; trigger the next A/D conversion
+    ; check for end of buffer passed, if so then reset pointer to buffer start
 
-    movlw   0x01
-    banksel adTrigger
-    movwf   adTrigger
+    movlw   FSR0L
+    sublw   (samplePreBuf + SAMPLE_PREBUF_LEN)  ; subtract end address
+    btfss   STATUS,Z
+	retfie                  ; return and enable interrupts
+
+    movlw   samplePreBuf    ; reset to start of buffer
+    movwf   FSR0L
 
 	retfie                  ; return and enable interrupts
 
-; end of handleTimer0Interrupt
+; end of handleADInterrupt
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -1819,5 +2240,334 @@ rbd3:
 
 ; end of reallyBigDelay
 ;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; setupADVars
+;
+; Sets up variables and pointers releated to A/D sampling and storage.
+;
+
+setupADVars:
+
+    banksel peakFlags
+
+    clrf    peakFlags
+
+    movlw   0x00                ;preset to min value so any max will exceed
+    movwf   maxPeak
+    clrf    maxPeakClk
+    clrf    maxPeakLoc
+    movlw   0xff                ;preset to max value so any min will exceed
+    movwf   minPeak
+    clrf    minPeakClk
+    clrf    minPeakLoc
+    clrf    maxABSPeak
+
+    clrf    peakBufFinishCnt
+    clrf    peakBufLastLoc
+
+    ; assign all pointers to a buffer
+
+    movlw   high mapBuf1
+    movwf   mapCatchBufH
+    movlw   mapBuf1
+    movwf   mapCatchBufL
+
+    movlw   high mapBuf2
+    movwf   mapXmtBufH
+    movlw   mapBuf2
+    movwf   mapXmtBufL
+
+    movlw   high sampleBuf1
+    movwf   catchBufH
+    movlw   sampleBuf1
+    movwf   catchBufL
+
+    movlw   high sampleBuf2
+    movwf   peakBufH
+    movlw   sampleBuf2
+    movwf   peakBufL
+
+    movlw   high sampleBuf3
+    movwf   xmtBufH
+    movlw   sampleBuf3
+    movwf   xmtBufL
+
+    ; setup A/D pre-buffer variables
+
+    banksel lastADSample
+
+    clrf    lastADSample
+    clrf    lastSampleClk
+    clrf    lastSampleLoc
+    clrf    numPreSamples
+    clrf    maxNumPreSamples
+
+    movlw   high samplePreBuf
+    movwf   inPreBufH
+    movwf   outPreBufH
+    movlw   samplePreBuf
+    movwf   inPreBufL
+    movwf   outPreBufL
+
+    ; zero each buffer (makes debugging easier)
+
+    movlw   high samplePreBuf
+    movwf   FSR0H
+    movlw   samplePreBuf
+    movwf   FSR0L
+    movlw   SAMPLE_PREBUF_LEN
+    call    clearMemBlock
+
+    movlw   high mapBuf1
+    movwf   FSR0H
+    movlw   mapBuf1
+    movwf   FSR0L
+    movlw   MAP_BUF_LEN
+    call    clearMemBlock
+
+    movlw   high mapBuf2
+    movwf   FSR0H
+    movlw   mapBuf2
+    movwf   FSR0L
+    movlw   MAP_BUF_LEN
+    call    clearMemBlock
+
+    movlw   high sampleBuf1
+    movwf   FSR0H
+    movlw   sampleBuf1
+    movwf   FSR0L
+    movlw   SAMPLE_BUF_LEN
+    call    clearMemBlock
+
+    movlw   high sampleBuf2
+    movwf   FSR0H
+    movlw   sampleBuf2
+    movwf   FSR0L
+    movlw   SAMPLE_BUF_LEN
+    call    clearMemBlock
+
+    movlw   high sampleBuf3
+    movwf   FSR0H
+    movlw   sampleBuf3
+    movwf   FSR0L
+    movlw   SAMPLE_BUF_LEN
+    call    clearMemBlock
+
+    ; For boards which do not have a clock position sync input, each channel is assigned to a
+    ; different clock position (such as for Transverse system where shoes do not spin but are
+    ; always in the same circumferential location).
+    ; In such case, the PIC's I2C slave address number is used as the clock number and stored in
+    ; Timer 0 which will never change as there is no sync input. Thus, when the A/D samples are
+    ; stored in the map buffer, they will always be in the same clock position which matches the
+    ; I2C address. The host then sorts that all out to spread the data across the display map.
+    ;
+    ; For systems with rotating shoes, the sync input will reset and increment the Timer 0 to
+    ; reflect the appropriate clock position. The mapping code will work in this case as well.
+
+    banksel slaveI2CAddress
+    movf    slaveI2CAddress,W
+    banksel TMR0
+    movwf   TMR0
+
+    return
+
+; end of setupADVars
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; clearMemBlock
+;
+; Sets all bytes up to 255 in a memory block to zero.
+;
+; On Entry:
+;
+; W contains number of bytes to zero
+; FSR0 points to start of block
+;
+
+clearMemBlock:
+
+    banksel scratch0                        ; store number of bytes in block
+    movwf   scratch0
+
+    movlw   0x00
+
+cMBLoop:
+
+    movwi   FSR0++
+    decfsz  scratch0,F
+    goto    cMBLoop
+
+    return
+
+; end of clearMemBlock
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; preservePeakData
+;
+; Copies the peak sample values and related variables to snapshot variables. The catch and peak
+; buffer pointers are swapped so that the buffer data associated with the peak is also preserved.
+;
+; The map buffer is not preserved as it is not associated with the peak values.
+;
+; On Entry:
+;
+; bank register should be set to peakFlags
+;
+; On Exit:
+;
+; bank register points at peakFlags
+; WREG is unknown
+;
+
+preservePeakData:
+
+    movf    maxPeak,W
+    movwf   maxPeakSnap
+
+    movf    maxPeakClk,W
+    movwf   maxPeakClkSnap
+
+    movf    maxPeakLoc,W
+    movwf   maxPeakLocSnap
+
+    movf    minPeak,W
+    movwf   minPeakSnap
+
+    movf    minPeakClk,W
+    movwf   minPeakClkSnap
+
+    movf    minPeakLoc,W
+    movwf   minPeakLocSnap
+
+    call    swapCatchPeakPtrs
+
+    return
+
+; end of preservePeakData
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; swapCatchPeakPtrs
+;
+; Swaps the value in catchBufH:L pointer with that in peakBufH:L pointer.
+;
+; On Entry:
+;
+; bank register should be set to peakFlags
+;
+; On Exit:
+;
+; bank register points at peakFlags
+; WREG is unknown
+;
+
+swapCatchPeakPtrs:
+
+    movf    catchBufH,W
+    movwf   pbScratch0
+
+    movf    peakBufH,W
+    movwf   catchBufH
+
+    movf    pbScratch0,W
+    movwf   peakBufH
+
+    movf    catchBufL,W
+    movwf   pbScratch0
+
+    movf    peakBufL,W
+    movwf   catchBufL
+
+    movf    pbScratch0,W
+    movwf   peakBufL
+
+    return
+
+; end of swapCatchPeakPtrs
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; swapXmtPeakPtrs
+;
+; Swaps the value in xmtBufH:L pointer with that in peakBufH:L pointer.
+;
+; On Entry:
+;
+; bank register should be set to peakFlags
+;
+; On Exit:
+;
+; bank register points at peakFlags
+; WREG is unknown
+;
+
+swapXmtPeakPtrs:
+
+    movf    xmtBufH,W
+    movwf   pbScratch0
+
+    movf    peakBufH,W
+    movwf   xmtBufH
+
+    movf    pbScratch0,W
+    movwf   peakBufH
+
+    movf    xmtBufL,W
+    movwf   pbScratch0
+
+    movf    peakBufL,W
+    movwf   xmtBufL
+
+    movf    pbScratch0,W
+    movwf   peakBufL
+
+    return
+
+; end of swapXmtPeakPtrs
+;--------------------------------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------------------------------
+; swapMapXmtCatchPtrs
+;
+; Swaps the value in mapXmtBufH:L pointer with that in mapCatchBufH:L pointer.
+;
+; On Entry:
+;
+; bank register should be set to peakFlags
+;
+; On Exit:
+;
+; bank register points at peakFlags
+; WREG is unknown
+;
+
+swapMapXmtCatchPtrs:
+
+    movf    mapXmtBufH,W
+    movwf   pbScratch0
+
+    movf    mapCatchBufH,W
+    movwf   mapXmtBufH
+
+    movf    pbScratch0,W
+    movwf   mapCatchBufH
+
+    movf    mapXmtBufL,W
+    movwf   pbScratch0
+
+    movf    mapCatchBufL,W
+    movwf   mapXmtBufL
+
+    movf    pbScratch0,W
+    movwf   mapCatchBufL
+
+    return
+
+; end of swapMapXmtCatchPtrs
+;--------------------------------------------------------------------------------------------------
+
 
     END
