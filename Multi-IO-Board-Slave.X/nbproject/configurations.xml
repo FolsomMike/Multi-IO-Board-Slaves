@@ -13,7 +13,7 @@
                    displayName="Source Files"
                    projectFiles="true">
       <itemPath>../p16f1459.inc</itemPath>
-      <itemPath>../Multi_IO_A_Slave.asm</itemPath>
+      <itemPath>../Multi-IO-A-Slave.asm</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"

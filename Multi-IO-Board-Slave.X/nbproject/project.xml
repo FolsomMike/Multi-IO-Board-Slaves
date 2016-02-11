@@ -3,7 +3,7 @@
     <type>com.microchip.mplab.nbide.embedded.makeproject</type>
     <configuration>
         <data xmlns="http://www.netbeans.org/ns/make-project/1">
-            <name>Multi-IO_Board_Slave</name>
+            <name>Multi-IO-Board-Slave</name>
             <creation-uuid>57c0fb37-99cb-4bd9-b90d-0751904acbed</creation-uuid>
             <make-project-type>0</make-project-type>
             <c-extensions/>
