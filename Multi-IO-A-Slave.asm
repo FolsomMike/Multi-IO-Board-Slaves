@@ -88,6 +88,11 @@
 ; used so that data never needs to be copied from the active catch buffer to a peak buffer and
 ; from there to a transmit buffer: sampleBuf1, sampleBuf2, sampleBuf3.
 ;
+; Note MKS: should probably use 128 byte circular buffers positioned at 128 byte page boundaries.
+; When incrementing pointer, only low byte should be modified then top bit zeroed. This will cause
+; the pointer to automatically wrap back to the top of the buffer without having to compare with
+; the end of the buffer at each increment. This is similar to the method used in the TI DSPs.
+;
 ; There are three buffer pointers used: catchBuf, peakBuf, xmtBuf. Each pointer is assigned to
 ; one of the sampleBuf* buffers. When a peak is detected, peakBufFinishCnt is set to 40 (half the
 ; buffer length) and is thereafter counted down for each sample added to the buffer.
