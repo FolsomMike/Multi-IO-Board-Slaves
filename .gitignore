@@ -14,7 +14,7 @@
 
 archive/
 Distributions/
-build/default/production/
+build/
 nbproject/Makefile-default.mk
 nbproject/Makefile-local-default.mk
 nbproject/Makefile-genesis.properties
