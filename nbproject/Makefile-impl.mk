@@ -24,7 +24,7 @@ CLEAN_SUBPROJECTS=${CLEAN_SUBPROJECTS_${SUBPROJECTS}}
 
 
 # Project Name
-PROJECTNAME=Multi-IO-Board-Slave.X
+PROJECTNAME=Multi-IO-Board-Slaves
 
 # Active Configuration
 DEFAULTCONF=default
