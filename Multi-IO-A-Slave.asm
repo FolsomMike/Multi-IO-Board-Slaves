@@ -1640,14 +1640,14 @@ handleI2CCommand:
 
     ; check if SSP1IF flag set -- if so, matching address byte has been received
     
-    ifndef debug               ; pretend flag set if in debug mode
+    ifndef  debug_on            ; pretend flag set if in debug mode
     banksel PIR1
     btfss   PIR1, SSP1IF
     return
     endif
 
     banksel SSP1BUF
-    movf    SSP1BUF,W            ; get incoming address byte; clears BF flag
+    movf    SSP1BUF,W           ; get incoming address byte; clears BF flag
 
     call    clearSSP1IF
 
