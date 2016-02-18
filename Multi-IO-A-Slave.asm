@@ -1707,6 +1707,11 @@ handleI2CReceive:
     sublw   PIC_DISABLE_POT_CMD
     btfsc   STATUS,Z
     goto    disableDigitalPot
+    
+    movf    masterCmd,W
+    sublw   PIC_GET_VALUE_CMD
+    btfsc   STATUS,Z
+    goto    storeSubCmd         ; subcommand specifies which value to send on next xmt operation
 
     return
 
