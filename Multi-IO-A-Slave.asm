@@ -1782,10 +1782,82 @@ handleI2CTransmit:
     sublw   PIC_GET_PEAK_PKT_CMD
     btfsc   STATUS,Z
     goto    getPeakPacket
+    
+    movf    masterCmd,W
+    sublw   PIC_GET_VALUE_CMD
+    btfsc   STATUS,Z
+    goto    transmitValueToMaster
 
     return
 
 ; end handleI2CTransmit
+;--------------------------------------------------------------------------------------------------
+    
+;--------------------------------------------------------------------------------------------------
+; transmitValueToMaster
+;
+; Determines which two-byte value to send to the master pic and then sends it.
+;
+; Which value to send is determined by comparing the last subcommand received from the master with
+; all of the subcommands of the get value command.
+;
+
+transmitValueToMaster:
+    
+    banksel i2cXmtBuf                   ; set buffer pointer to transmit buffer start
+    movlw   high i2cXmtBuf
+    movwf   i2cXmtBufPtrH
+    movlw   i2cXmtBuf
+    movwf   i2cXmtBufPtrL
+
+    movf    i2cXmtBufPtrH, W            ; load FSR0 with buffer pointer
+    movwf   FSR0H
+    movf    i2cXmtBufPtrL, W
+    movwf   FSR0L
+
+    movf    subCmd,W                    ; get last AD value if subcommand says to
+    sublw   LAST_AD_VALUE_SUB
+    btfsc   STATUS,Z
+    call    getLastADValue
+    
+    movlw   .2                          ; number of data bytes in packet
+    movwf   scratch0
+    
+    call    calcAndStoreCheckSumForI2CXmtBuf
+
+    goto    sendI2CBuffer
+
+; end transmitValueToMaster
+;--------------------------------------------------------------------------------------------------
+    
+;--------------------------------------------------------------------------------------------------
+; getLastADValue
+;
+; Gets the last value converted from analog to digital and puts the upper byte in INDFO and the
+; lower in INDF0++.
+;
+; ON ENTRY:
+;
+;   FSR0        =   address where upper byte of last AD value should be put
+;   1[FSR0]     =   address where lower byte of last AD value should be put
+;
+; ON EXIT:
+;    
+;   INDF0       =   upper byte of last AD value
+;   1[INDF0]    =   lower byte of last AD value
+;
+
+getLastADValue:
+    
+    movlw   .0                  ; no upper byte so just load FSR0 with 0
+    movwf   INDF0
+
+    movf    lastADSample,W      ; load lower byte into 1[FSR1]
+    movwi   1[FSR0]
+
+    return
+
+; end getLastADValue
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
