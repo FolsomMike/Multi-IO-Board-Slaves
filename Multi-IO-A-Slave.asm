@@ -479,6 +479,7 @@ AD_CHANNEL_CODE    EQU     b'00100101'
     comErrorCnt             ; tracks the number of communication errors
 
     masterCmd               ; command byte received from Master via I2C bus
+    subCmd                  ; sub command byte received from Master via I2C bus
 
     scratch0                ; these can be used by any function
     scratch1
@@ -1710,6 +1711,32 @@ handleI2CReceive:
     return
 
 ; end handleI2CReceive
+;--------------------------------------------------------------------------------------------------
+    
+;--------------------------------------------------------------------------------------------------
+; storeSubCmd
+;
+; Sets the subcommand to the next byte received on the I2C bus.
+; 
+; Note that only some master commands will be followed by a subcommand; if they are not followed by
+; one then this function does not need to be called.
+;
+
+storeSubCmd:
+
+    call    waitForSSP1IFHighOrStop     ; wait for byte or stop condition to be received
+
+    btfss   STATUS,Z
+    goto    cleanUpI2CAndReturn         ; bail out when stop condition received
+
+    call    readI2CByteAndPrepForNext   ; get the byte just received
+
+    banksel subCmd
+    movwf   subCmd                      ; store the subcommand byte (byte just received is subcmd)
+
+    return
+
+; end storeSubCmd
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
