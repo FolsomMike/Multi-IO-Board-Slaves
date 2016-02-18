@@ -1641,7 +1641,7 @@ handleI2CCommand:
     endif
 
     banksel SSP1BUF
-    movf    SSP1BUF,W            ; get incoming value; clears BF flag
+    movf    SSP1BUF,W            ; get incoming address byte; clears BF flag
 
     call    clearSSP1IF
 
