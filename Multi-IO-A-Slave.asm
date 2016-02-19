@@ -1814,11 +1814,25 @@ transmitTwoByteValueToMaster:
 
 getLastADValue:
     
-    movlw   .0                  ; no upper byte so just load INDF0 with 0
+;//DEBUG HSS// -- uncomment this stuff
+    
+    ;movlw   .0                  ; no upper byte so just load INDF0 with 0
+    ;movwf   INDF0
+
+    ;movf    lastADSample,W      ; load lower byte into 1[FSR0]
+    ;movwi   1[FSR0]
+    
+;//DEBUG HSS// -- end of uncomment this stuff
+    
+;//DEBUG HSS// -- remove this stuff (used for testing only)
+    
+    movlw   0x1234
     movwf   INDF0
 
-    movf    lastADSample,W      ; load lower byte into 1[FSR0]
+    movf    slaveI2CAddress,W
     movwi   1[FSR0]
+    
+;//DEBUG HSS// -- end of remove this stuff (used for testing only)
 
     return
 
