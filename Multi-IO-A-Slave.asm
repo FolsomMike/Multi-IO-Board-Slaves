@@ -1772,7 +1772,7 @@ transmitTwoByteValueToMaster:
     banksel i2cXmtBuf                   ; set buffer pointer to transmit buffer start
     movlw   high i2cXmtBuf
     movwf   i2cXmtBufPtrH
-    movlw   i2cXmtBuf
+    movlw   low i2cXmtBuf
     movwf   i2cXmtBufPtrL
 
     movf    i2cXmtBufPtrH, W            ; load FSR0 with buffer pointer
@@ -1826,7 +1826,7 @@ getLastADValue:
     
 ;//DEBUG HSS// -- remove this stuff (used for testing only)
     
-    movlw   0x1234
+    movlw   0x12
     movwf   INDF0
 
     movf    slaveI2CAddress,W
