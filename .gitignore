@@ -1,5 +1,5 @@
 # MPLAB X IDE Git Ignore
-# Version: 1.0
+# Version: 1.1
 # Authors: Hunter & Mike Schoonover
 #
 # Helpful Git notes:
@@ -18,8 +18,11 @@
 archive/
 Distributions/
 build/
+nbproject/Package-default.bash
 nbproject/Makefile-default.mk
 nbproject/Makefile-local-default.mk
+nbproject/Makefile-impl.mk
+nbproject/Makefile-variables.mk
 nbproject/Makefile-genesis.properties
 nbproject/configurations.xml
 nbproject/private/
