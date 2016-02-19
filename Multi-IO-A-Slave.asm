@@ -1814,10 +1814,10 @@ transmitTwoByteValueToMaster:
 
 getLastADValue:
     
-    movlw   .0                  ; no upper byte so just load FSR0 with 0
+    movlw   .0                  ; no upper byte so just load INDF0 with 0
     movwf   INDF0
 
-    movf    lastADSample,W      ; load lower byte into 1[FSR1]
+    movf    lastADSample,W      ; load lower byte into 1[FSR0]
     movwi   1[FSR0]
 
     return
