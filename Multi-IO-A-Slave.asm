@@ -279,10 +279,7 @@ PIC_START_CMD                   EQU .3
 PIC_GET_PEAK_PKT_CMD            EQU .4
 PIC_ENABLE_POT_CMD              EQU .5
 PIC_DISABLE_POT_CMD             EQU .6
-PIC_GET_VALUE_CMD               EQU .7      ; Value to get specified by following subcommand
-
-; Subcommands for PIC_GET_VALUE_CMD -- Master to Slaves immediately following PIC_GET_VALUE_CMD
-LAST_AD_VALUE_SUB               EQU .0      ; Master wants last value converted from analog to dig
+PIC_GET_LAST_AD_VALUE_CMD       EQU .7
 
 I2C_RCV_BUF_LEN      EQU .5
 I2C_XMT_BUF_LEN      EQU .20
@@ -478,7 +475,6 @@ AD_CHANNEL_CODE    EQU     b'00100101'
     comErrorCnt             ; tracks the number of communication errors
 
     masterCmd               ; command byte received from Master via I2C bus
-    subCmd                  ; sub command byte received from Master via I2C bus
 
     scratch0                ; these can be used by any function
     scratch1
@@ -1708,41 +1704,10 @@ handleI2CReceive:
     sublw   PIC_DISABLE_POT_CMD
     btfsc   STATUS,Z
     goto    disableDigitalPot
-    
-    movf    masterCmd,W
-    sublw   PIC_GET_VALUE_CMD
-    btfsc   STATUS,Z
-    goto    storeSubCmd         ; subcommand specifies which value to send on next xmt operation
 
     return
 
 ; end handleI2CReceive
-;--------------------------------------------------------------------------------------------------
-    
-;--------------------------------------------------------------------------------------------------
-; storeSubCmd
-;
-; Sets the subcommand to the next byte received on the I2C bus.
-; 
-; Note that only some master commands will be followed by a subcommand; if they are not followed by
-; one then this function does not need to be called.
-;
-
-storeSubCmd:
-
-    call    waitForSSP1IFHighOrStop     ; wait for byte or stop condition to be received
-
-    btfss   STATUS,Z
-    goto    cleanUpI2CAndReturn         ; bail out when stop condition received
-
-    call    readI2CByteAndPrepForNext   ; get the byte just received
-
-    banksel subCmd
-    movwf   subCmd                      ; store the subcommand byte (byte just received is subcmd)
-
-    return
-
-; end storeSubCmd
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -1785,9 +1750,9 @@ handleI2CTransmit:
     goto    getPeakPacket
     
     movf    masterCmd,W
-    sublw   PIC_GET_VALUE_CMD
+    sublw   PIC_GET_LAST_AD_VALUE_CMD
     btfsc   STATUS,Z
-    goto    transmitValueToMaster
+    goto    transmitTwoByteValueToMaster
 
     return
 
@@ -1795,14 +1760,14 @@ handleI2CTransmit:
 ;--------------------------------------------------------------------------------------------------
     
 ;--------------------------------------------------------------------------------------------------
-; transmitValueToMaster
+; transmitTwoByteValueToMaster
 ;
 ; Determines which two-byte value to send to the master pic and then sends it.
 ;
-; Which value to send is determined by the last subcommand received from the master.
+; Which value to send is determined by the last command received from the master.
 ;
 
-transmitValueToMaster:
+transmitTwoByteValueToMaster:
     
     banksel i2cXmtBuf                   ; set buffer pointer to transmit buffer start
     movlw   high i2cXmtBuf
@@ -1815,8 +1780,8 @@ transmitValueToMaster:
     movf    i2cXmtBufPtrL, W
     movwf   FSR0L
 
-    movf    subCmd,W                    ; get last AD value if subcommand says to
-    sublw   LAST_AD_VALUE_SUB
+    movf    masterCmd,W                 ; get last AD value if command says to
+    sublw   PIC_GET_LAST_AD_VALUE_CMD
     btfsc   STATUS,Z
     call    getLastADValue
     
@@ -1827,7 +1792,7 @@ transmitValueToMaster:
 
     goto    sendI2CBuffer
 
-; end transmitValueToMaster
+; end transmitTwoByteValueToMaster
 ;--------------------------------------------------------------------------------------------------
     
 ;--------------------------------------------------------------------------------------------------
