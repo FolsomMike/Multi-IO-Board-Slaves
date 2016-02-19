@@ -1356,6 +1356,8 @@ bufNotFinished:
 ; This function is done in the main code and not in interrupt code. It is expected that the A/D
 ; converter interrupt will occur one or more times during transmission of the peak data.
 ;
+; See Device.handleAllStatusPacket method in Java host code for details on packet structure.
+;
 
 getAllStatus:
 
