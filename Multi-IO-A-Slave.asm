@@ -1800,8 +1800,7 @@ handleI2CTransmit:
 ;
 ; Determines which two-byte value to send to the master pic and then sends it.
 ;
-; Which value to send is determined by comparing the last subcommand received from the master with
-; all of the subcommands of the get value command.
+; Which value to send is determined by the last subcommand received from the master.
 ;
 
 transmitValueToMaster:
