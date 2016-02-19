@@ -282,8 +282,7 @@ PIC_DISABLE_POT_CMD             EQU .6
 PIC_GET_VALUE_CMD               EQU .7      ; Value to get specified by following subcommand
 
 ; Subcommands for PIC_GET_VALUE_CMD -- Master to Slaves immediately following PIC_GET_VALUE_CMD
-               
-LAST_AD_VALUE_SUB               EQU .1      ; Master wants last value converted from analog to dig
+LAST_AD_VALUE_SUB               EQU .0      ; Master wants last value converted from analog to dig
 
 I2C_RCV_BUF_LEN      EQU .5
 I2C_XMT_BUF_LEN      EQU .20
