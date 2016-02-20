@@ -11,14 +11,14 @@
 ;
 ; The Slave PICs communicate with the Master PIC via the I2C bus.
 ;
-; The system clock is configured to use an external 4 Mhz source which is boosted to 16 MHz by the
+; The system clock is configured to use an external 8 Mhz source which is boosted to 32 MHz by the
 ; PLL. The CLKOUT pin outputs a clock at Fosc/4 which drives the input clock of the next Slave PIC.
-; Each Slave PIC uses the PLL to generate a 16 MHz from the 4 Mhz input supplied by the Slave which
+; Each Slave PIC uses the PLL to generate a 32 MHz from the 8 Mhz input supplied by the Slave which
 ; precedes it in the daisy-chain. The CLKOUT pin of each Slave PIC drives the next Slave PIC and
 ; so forth. Each PIC's CLKOUT output is FOSC/4 into the next PIC, so each must use its PLL to run
-; its system clock at 16 MHz.
+; its system clock at 32 MHz.
 ;
-; The 16 MHz is used since the Slave PICs run their A/D convertors at Fosc/16 to achieve a sample
+; The 32 MHz is used since the Slave PICs run their A/D convertors at Fosc/32 to achieve a sample
 ; period of 1 us. This is the fastest specified A/D conversion rate.
 ;
 ; On half of the Slaves, an I/O pin is connected to a digital pot's I2C address configuration
@@ -315,11 +315,12 @@ SAMPLE_BUF_LEN      EQU .80
 
 ; CONFIG1
 ; __config 0xF9E4
- __CONFIG _CONFIG1, _FOSC_INTOSC & _WDTE_OFF & _PWRTE_OFF & _MCLRE_ON & _CP_OFF & _BOREN_OFF & _CLKOUTEN_ON & _IESO_OFF & _FCMEN_OFF
+ __CONFIG _CONFIG1, _FOSC_ECH & _WDTE_OFF & _PWRTE_OFF & _MCLRE_ON & _CP_OFF & _BOREN_OFF & _CLKOUTEN_ON & _IESO_OFF & _FCMEN_OFF
 ; CONFIG2
 ; __config 0xFFFF
- __CONFIG _CONFIG2, _WRT_ALL & _CPUDIV_NOCLKDIV & _USBLSCLK_48MHz & _PLLMULT_4x & _PLLEN_DISABLED & _STVREN_ON & _BORV_LO & _LPBOR_OFF & _LVP_OFF
+ __CONFIG _CONFIG2, _WRT_ALL & _CPUDIV_NOCLKDIV & _USBLSCLK_48MHz & _PLLMULT_4x & _PLLEN_ENABLED & _STVREN_ON & _BORV_LO & _LPBOR_OFF & _LVP_OFF
 
+; _FOSC_ECH ?> External Clock, High Power Mode (4-20 MHz): device clock supplied to CLKIN pins
 ; _FOSC_INTOSC -> internal oscillator, I/O function on OSC1/CLKIN pin
 ; _WDTE_OFF -> watch dog timer disabled
 ; _PWRTE_OFF -> Power Up Timer disabled
@@ -838,21 +839,15 @@ initializeOutputs:
 ;
 ; Assumes clock related configuration bits are set as follows:
 ;
-;   _FOSC_INTOSC,  _CPUDIV_NOCLKDIV, _PLLMULT_4x, _PLLEN_DISABLED
+;   _FOSC_ECH, _CPUDIV_NOCLKDIV, _PLLMULT_4x, _PLLEN_ENABLED
 ;
 ; Assumes all programmable clock related options are at Reset default values.
 ;
 
 setupClock:
 
-    ; choose internal clock frequency of 16 Mhz
-
-    banksel OSCCON
-
-    bsf     OSCCON, IRCF0
-    bsf     OSCCON, IRCF1
-    bsf     OSCCON, IRCF2
-    bsf     OSCCON, IRCF3
+    ; Since each slave pic is set up to use an external clock (see notes at top of page),
+    ; there is no need to set anything programmatically
 
     return
 
