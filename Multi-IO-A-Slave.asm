@@ -1573,9 +1573,57 @@ sIBXmtLoop:
 
 getRunData:
 
+    banksel i2cXmtBuf                   ; set buffer pointer to transmit buffer start
+    movlw   high i2cXmtBuf
+    movwf   i2cXmtBufPtrH
+    movlw   low i2cXmtBuf
+    movwf   i2cXmtBufPtrL
+    
+    movf    i2cXmtBufPtrH, W            ; load FSR0 with buffer pointer
+    movwf   FSR0H
+    movf    i2cXmtBufPtrL, W
+    movwf   FSR0L
 
-
-    return
+    banksel peakFlags                   ; select bank with A/D related values
+    
+    ; load upper bytes of overall min and max with 0s
+    movlw   0x00
+    movwf   INDF0                       ; fill min upper byte with 0s
+    movwi   2[FSR0]                     ; fill max upper byte with 0s
+    
+    ; load overall min into xmt buffer
+    movf    minPeak,W                   ; load lower byte
+    movwi   1[FSR0]
+    
+    ; load overall max into xmt buffer
+    movf    maxPeak,W                   ; load lower byte
+    movwi   3[FSR0]
+    
+    addfsr  FSR0,.4                     ; point FSR0 at spot in xmt buffer after values above
+    
+; //WIP HSS// -- clock map is currently populated with 0s but should use real values in future
+    
+    movlw   .48                         ; counter for number of bytes in clock map
+    movwf   pbScratch0
+    
+    movlw   0x00
+    
+getRunData_clockMapLoop:
+    
+    movwi   FSR0++                      ; load everything in clock map with 0s
+    
+    decfsz  pbScratch0,F                ; loop until entire clock map populated
+    goto    getRunData_clockMapLoop
+    
+; //WIP HSS// end
+    
+    banksel scratch0                    ; number of data bytes in packet to be checksummed
+    movlw   .52
+    movwf   scratch0
+    
+    call    calcAndStoreCheckSumForI2CXmtBuf
+    
+    goto    sendI2CBuffer
 
 ; end getRunData
 ;--------------------------------------------------------------------------------------------------
