@@ -1562,7 +1562,7 @@ sIBXmtLoop:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; getPeakPacket
+; getRunData
 ;
 ; Places the current peak data in a buffer and transmits it back to the Master via I2C. Clock
 ; stretching is enabled so the bus will wait as necessary between each byte.
@@ -1571,13 +1571,13 @@ sIBXmtLoop:
 ; converter interrupt will occur one or more times during transmission of the peak data.
 ;
 
-getPeakPacket:
+getRunData:
 
 
 
     return
 
-; end getPeakPacket
+; end getRunData
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -1743,7 +1743,7 @@ handleI2CTransmit:
     movf    masterCmd,W
     sublw   PIC_GET_RUN_DATA_CMD
     btfsc   STATUS,Z
-    goto    getPeakPacket
+    goto    getRunData
     
     movf    masterCmd,W
     sublw   PIC_GET_LAST_AD_VALUE_CMD
