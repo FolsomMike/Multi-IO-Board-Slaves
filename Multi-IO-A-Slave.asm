@@ -276,7 +276,7 @@ PIC_NO_ACTION_CMD               EQU .0
 PIC_ACK_CMD                     EQU .1
 PIC_GET_ALL_STATUS_CMD          EQU .2
 PIC_START_CMD                   EQU .3
-PIC_GET_PEAK_PKT_CMD            EQU .4
+PIC_GET_RUN_DATA_CMD            EQU .4
 PIC_ENABLE_POT_CMD              EQU .5
 PIC_DISABLE_POT_CMD             EQU .6
 PIC_GET_LAST_AD_VALUE_CMD       EQU .7
@@ -1741,7 +1741,7 @@ handleI2CTransmit:
     goto    getAllStatus
 
     movf    masterCmd,W
-    sublw   PIC_GET_PEAK_PKT_CMD
+    sublw   PIC_GET_RUN_DATA_CMD
     btfsc   STATUS,Z
     goto    getPeakPacket
     
