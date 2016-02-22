@@ -535,6 +535,10 @@ AD_CHANNEL_CODE    EQU     b'00100101'
                             ; bit 5: 0 =
 							; bit 6: 0 =
 							; bit 7: 0 =
+                            
+    lastADSample            ; the last A/D sample recorded
+    lastSampleClk           ; clock position of the last A/D sample recorded
+    lastSampleLoc           ; linear location of the last A/D sample recorded
 
     maxPeak
     maxPeakClk
@@ -594,10 +598,7 @@ AD_CHANNEL_CODE    EQU     b'00100101'
 ; this bank has 80 bytes of free space
 
  cblock 0x420               ; starting address
-
-    lastADSample            ; the last A/D sample recorded
-    lastSampleClk           ; clock position of the last A/D sample recorded
-    lastSampleLoc           ; linear location of the last A/D sample recorded
+ 
     numPreSamples
     maxNumPreSamples        ; maximum number of A/D values stored in pre-buffer at any one time
                             ; should never be bigger than the size of the buffer, otherwise it
@@ -1138,7 +1139,7 @@ setupADConverter:
 
     banksel ANSELC
     bsf     ANSELC, AD_AN9                      ;set I/O pin to analog mode
-
+    
     ; turn on A/D module and select channel
 
     banksel ADCON0
@@ -2238,51 +2239,43 @@ handleADInterrupt:
                                 ; (result is left justified so this gets
                                 ;  the upper 8 bits, ignoring the 2 lsbs in ADRESL)
 
-    bsf     ADCON0,ADGO         ;start next A/D conversion
-
-    banksel lastADSample        ; store the A/D value
+    bsf     ADCON0,ADGO         ; start next A/D conversion
+    
+    banksel lastADSample        ; store A/D sample
     movwf   lastADSample
-
-    banksel TMR0                ; store the current clock position
+    
+    banksel TMR0                ; get current clock position
     movf    TMR0,W
-    banksel lastSampleClk
-    movwf   lastSampleClk
+    
+    banksel peakFlags           ; select bank with A/D related values
+    
+    movwf   lastSampleClk       ; store current clock position
+    
+    movf    lastADSample,W      ; check to see if new max
+    subwf   maxPeak,W
+    btfsc   STATUS,C            ; if clear then last A/D sample > last stored maxPeak
+    goto    checkMinADInterrupt
+    
+    movf    lastADSample,W      ; store last A/D sample as new max peak
+    movwf   maxPeak
+    movf    lastSampleClk,W     ; store last clock sample as new max clock
+    movwf   maxPeakClk
+    
+checkMinADInterrupt:
+    
+    movf    lastADSample,W      ; check to see if new min
+    subwf   minPeak,W
+    btfss   STATUS,C            ; if set then last A/D sample <= last stored minPeak
+    goto    exitADInterrupt
 
-    ; store sample in the pre-buffer
-
-    movf    inPreBufH,W         ; set pointer to current pre-buffer insertion location
-    movwf   FSR0H
-    movf    inPreBufL,W
-    movwf   FSR0L
-
-    ; store the sample and clock
-
-    movf    lastADSample,W
-    movwi   FSR0++
-
-    movf    lastSampleClk,W
-    movwi   FSR0++
-
-    incf    numPreSamples,F
-
-
-;debug mks -- output a pulse to verify the timer0 period
-    banksel LATB
-    bsf     LATB, RB7
-    bcf     LATB, RB7
-;debug mks end
-
-    ; check for end of buffer passed, if so then reset pointer to buffer start
-
-    movlw   FSR0L
-    sublw   (samplePreBuf + SAMPLE_PREBUF_LEN)  ; subtract end address
-    btfss   STATUS,Z
-	retfie                  ; return and enable interrupts
-
-    movlw   samplePreBuf    ; reset to start of buffer
-    movwf   FSR0L
-
-	retfie                  ; return and enable interrupts
+    movf    lastADSample,W      ; store last A/D sample as new min peak
+    movwf   minPeak
+    movf    lastSampleClk,W     ; store last clock sample as new min clock
+    movwf   minPeakClk
+    
+exitADInterrupt:
+    
+    retfie                      ; return and enable interrupts
 
 ; end of handleADInterrupt
 ;--------------------------------------------------------------------------------------------------
@@ -2350,6 +2343,10 @@ setupADVars:
     clrf    minPeakClk
     clrf    minPeakLoc
     clrf    maxABSPeak
+    
+    clrf    lastADSample        ;clear sample values
+    clrf    lastSampleClk
+    clrf    lastSampleLoc
 
     clrf    peakBufFinishCnt
     clrf    peakBufLastLoc
@@ -2383,11 +2380,7 @@ setupADVars:
 
     ; setup A/D pre-buffer variables
 
-    banksel lastADSample
-
-    clrf    lastADSample
-    clrf    lastSampleClk
-    clrf    lastSampleLoc
+    banksel numPreSamples
     clrf    numPreSamples
     clrf    maxNumPreSamples
 
