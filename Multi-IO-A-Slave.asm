@@ -1564,8 +1564,15 @@ sIBXmtLoop:
 ;--------------------------------------------------------------------------------------------------
 ; getRunData
 ;
-; Places the current peak data in a buffer and transmits it back to the Master via I2C. Clock
-; stretching is enabled so the bus will wait as necessary between each byte.
+; Puts all of the run data into the xmt buffer and then transmits it to the Master PIC via I2C. This
+; function should be called when the PIC_GET_RUN_DATA_CMD is received from the Master PIC.
+;
+; Run data currently consists of:
+;   02 bytes    overall min
+;   02 bytes    overall max
+;   48 bytes    clock map
+;   ---
+;   52 bytes    total
 ;
 ; This function is done in the main code and not in interrupt code. It is expected that the A/D
 ; converter interrupt will occur one or more times during transmission of the peak data.
