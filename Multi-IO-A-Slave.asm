@@ -1116,20 +1116,20 @@ setupI2CSlave7BitMode:
 setupADConverter:
 
     ;This code block configures the ADC for polling, Vdd and Vss references,
-    ; FOSC/16 clock
+    ; FOSC/32 clock
 
     ; set ADCON1 to configure the A/D converter
     ; bit 7 = 0 : left justify the result in ADRESH:ADRESL
-    ; bit 6 = 1 : bits 6-4 : A/D Conversion Clock Select bits
-    ; bit 5 = 0 :    101 -> FOSC/16
-    ; bit 4 = 1 : 
+    ; bit 6 = 0 : bits 6-4 : A/D Conversion Clock Select bits
+    ; bit 5 = 1 :    010 -> FOSC/32 -> 1.0 us
+    ; bit 4 = 0 : 
     ; bit 3 = 0 : unused
     ; bit 2 = 0 : unused
     ; bit 1 = 0 : bits 1-0: A/D voltage reference source
     ; bit 0 = 0 :    00 -> VREF+ connected to VDD
 
     banksel ADCON1
-    movlw   b'01010000'
+    movlw   b'00100000'
     movwf   ADCON1
 
     ; input channel/pin: AN9/RC7
