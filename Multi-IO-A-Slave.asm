@@ -779,7 +779,7 @@ setup:
 
     bsf     INTCON,IOCIE    ; enable interrupt-on-change for enabled inputs
 
-;debug mks -- put this back in    bsf     INTCON,GIE      ; enable all interrupts
+    bsf     INTCON,GIE      ; enable all interrupts
 
     return
 
