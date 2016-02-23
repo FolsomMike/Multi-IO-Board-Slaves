@@ -1015,10 +1015,10 @@ setupTimer0:
 
 
     banksel ANSELC                      ; pin is digital I/O
-    bcf     ANSELC,RC7
+    bcf     ANSELC,RC5
 
     banksel TRISC                       ; pin is input
-    bsf     TRISC,RC7
+    bsf     TRISC,RC5
 
     banksel TMR0                        ; clear the counter
     clrf    TMR0
@@ -1605,6 +1605,11 @@ getRunData:
     ; load overall max into xmt buffer
     movf    maxPeak,W                   ; load lower byte
     movwi   3[FSR0]
+    
+    movlw   0x00                        ; set min and max to anti-peaks
+    movwf   maxPeak
+    movlw   0xff
+    movwf   minPeak
     
     addfsr  FSR0,.4                     ; point FSR0 at spot in xmt buffer after values above
     
