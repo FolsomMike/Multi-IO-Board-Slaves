@@ -1618,7 +1618,7 @@ getRunData:
     movlw   .48                         ; counter for number of bytes in clock map
     movwf   pbScratch0
     
-    movlw   0x00
+    movlw   0x7F
     
 getRunData_clockMapLoop:
     
@@ -1626,6 +1626,9 @@ getRunData_clockMapLoop:
     
     decfsz  pbScratch0,F                ; loop until entire clock map populated
     goto    getRunData_clockMapLoop
+    
+    movlw   0x86                        ; put 134 into the 16 clock position
+    moviw   -.32[FSR0]
     
 ; //WIP HSS// end
     
