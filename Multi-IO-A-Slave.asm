@@ -1595,15 +1595,14 @@ getRunData:
     
     ; load upper bytes of overall min and max with 0s
     movlw   0x00
-    movwf   INDF0                       ; fill min upper byte with 0s
-    movwi   2[FSR0]                     ; fill max upper byte with 0s
+    movwf   INDF0                       ; fill max upper byte with 0s
+    movwi   2[FSR0]                     ; fill min upper byte with 0s
     
-    ; load overall min into xmt buffer
-    movf    minPeak,W                   ; load lower byte
+    movf    maxPeak,W                   ; load max lower byte into xmt buffer
     movwi   1[FSR0]
     
-    ; load overall max into xmt buffer
-    movf    maxPeak,W                   ; load lower byte
+    ; load overall min into xmt buffer
+    movf    minPeak,W                   ; load min lower byte into xmt buffer
     movwi   3[FSR0]
     
     movlw   0x00                        ; set min and max to anti-peaks
