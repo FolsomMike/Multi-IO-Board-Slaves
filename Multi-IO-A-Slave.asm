@@ -60,105 +60,90 @@
 ;
 ; ----------------
 ;
-; Sample Pre-Buffering
+; Rundata Buffering
 ;
-; The A/D converter interrupt is made as short as possible to allow for shortest latency for all
-; tasks. It simply stores the A/D value in a buffer along with the clock position at the time of
-; the sample and increments numPreSamples to reflect the number of samples in the buffer.
+; Rundata buffer handling requires two buffers: a catch buffer and a xmt buffer.
 ;
-; The main code extracts the samples and processes them, decrementing numPreSamples. It also
-; records the maximum number of pre-samples ever stored at one time in maxNumPreSamples for
-; debugging purposes to check for buffer overruns.
+; When a request is made for run data transmission to the Master PIC, the catch and xmt buffers are 
+; swapped. Thus the current data will be preserved while transmitting; new data will be stored in a 
+; separate buffer.
 ;
-; samplePreBuf buffer format:
-;
-; pre-sample 1
-; pre-sample clock 1
-; pre-sample 2
-; pre-sample clock 2
-; ...
-;
-; The samples and clock positions are interleaved in samplePreBuf
+; The catch buffer pointer is in Common RAM to minimize the number of bankselects required in the 
+; A/D interrupt. Since transmitting the snapshot is not as time sensitive, the xmt buffer pointer is
+; not stored in Common RAM.
 ;
 ; ----------------
+; 
+; Snapshot Buffering
+; 
+; Three 128-byte circular buffers and three pointers are used for snapshot buffering. None of the 
+; three buffers are ever copied; instead, the pointers are swapped.
 ;
-; Sample Buffering
+; Operation:
 ;
-; A circular buffer is used to capture the last 80 A/D samples. To save time, three buffers are
-; used so that data never needs to be copied from the active catch buffer to a peak buffer and
-; from there to a transmit buffer: sampleBuf1, sampleBuf2, sampleBuf3.
+;   When a new peak is found, the A/D interrupt (handleAdIntterupt) will continue to put values into 
+;   the catch buffer until it has accumulated 64 samples after the peak. 
 ;
-; Note MKS: should probably use 128 byte circular buffers positioned at 128 byte page boundaries.
-; When incrementing pointer, only low byte should be modified then top bit zeroed. This will cause
-; the pointer to automatically wrap back to the top of the buffer without having to compare with
-; the end of the buffer at each increment. This is similar to the method used in the TI DSPs.
+;   Once all 64 samples are captured, the catch buffer and peak buffer pointers are swapped.
 ;
-; There are three buffer pointers used: catchBuf, peakBuf, xmtBuf. Each pointer is assigned to
-; one of the sampleBuf* buffers. When a peak is detected, peakBufFinishCnt is set to 40 (half the
-; buffer length) and is thereafter counted down for each sample added to the buffer.
+;   After swapping, the program continues looking for a higher peak than the one stored in the peak
+;   buffer, starting the process over again.
+;   
+; Transmitting:
 ;
-; When peakBufFinishCnt reaches 0, 40 samples have been saved after the peak. Thus there will be 40
-; samples before and 40 samples after the peak in the buffer. At that point, buffer location of the
-; last sample is stored in peakBufFinishCnt (the top bit should be ignored as it is part of the
-; bank selection bits) - the bottom 7 bits represent the value 0~80 where the last sample was
-; stored. From this, it can determined where the peak value must be in the buffer (40 bytes prior)
-; and the data can be rotated to center the peak.
+;   The snapshot is not transmitted with the run data, but the absolute peak is. The Master PIC
+;   compares the abosolute peaks retreived from the slaves and then requests the snapshot from the
+;   slave who returned the greatest peak. To ensure that the peak doesn't change between the time 
+;   the Master requested the rundata and snapshot, the snapshot xmt and snapshot catch buffer 
+;   pointers are swapped when the rundata is requested.
 ;
-; At that point, the catchBuf and peakBuf pointer values are swapped, so new data is now added to
-; a different buffer and the peak data stored in the first catch buffer is preserved. Every time
-; a new peak is detected, the catchBuf and peakBuf pointers are swapped so that the previous peak
-; is overwritten with new data while the last peak is always stored in the buffer pointed to by
-; peakBuf.
+; Ideally, the peak buffer should contain 63 samples before the peak and 64 after, but the buffer 
+; swapping can cause there to be less samples before, as few as zero.
+;   
+; The three buffers are rotated amongst the three pointers allowing data to be preserved without 
+; ever having to copy it. The pointers are not reset to the start of the buffer on swapping, so data
+; collection starts again with whatever the last location was.
 ;
-; When a request is made for peak data transmission to the Master PIC, the peakBuf and xmtBuf
-; pointer values are swapped. Thus the current peak will be preserved and new peaks will be stored
-; in a different buffer. Future swaps between catchBuf and peakBuf will involve the new buffer
-; leaving the old one alone while it is being transmitted.
+; The peak and catch buffer pointers are in Common RAM to minimize the number of bankselects 
+; required in the A/D interrupt. Since transmitting the snapshot is not as time sensitive, the
+; xmt buffer pointer is not stored in Common RAM.
+; 
+; On device reset, the pointers are set up as follows:
 ;
-; Thus the three buffers are rotated amongst the three pointers allowing data to be preserved
-; without ever having to copy it. The pointers are not reset to the start of the buffer on
-; swapping, so data collection starts again with whatever the last location was. The important
-; location is the 40th sample after the peak, as that dictates where the peak must lie in the
-; buffer.
+;       "catch buffer"      snapCatchBufH:snapCatchBufL         points at snapshot buffer 1
 ;
-; Buffer Swapping Process:
+;       "peak buffer"       snapPeakBufH:snapPeakBufL           points at snapshot buffer 2
 ;
-; collect samples in catchBuf
-; when peak detected:
-;   set peakBufFinishCnt to (buffer length)/2 and begin counting down with each sample
-; when peakBufFinishCnt reaches 0:
-;   swap catchBuf and peakBuf and set peakFlags.NEW_DATA flag
-; if new peak found before peakBufFinishCnt reaches 0, simple restart counter
+;       "xmt buffer"        snapXmtBufH:snapXmtBufL             points at snapshot buffer 3
 ;
-; when Peak Data transmit is requested, check peakFlags.NEW_DATA flag
-; if not set, return whatever data is in xmtBuf along with unset flag to alert that data is old
-; if set, swap peakBuf and xmtBuf, transmit xmtBuf, clear peakFlags.NEW_DATA flag
+; Used 128-byte circular buffers positioned at 128-byte page boundaries so that when incrementing 
+; the pointer, only low byte should be modified then top bit zeroed. This will cause the pointer to 
+; automatically wrap back to the top of the buffer without having to compare with the end of the 
+; buffer at each increment. This is similar to the method used in the TI DSPs.
+;
+; So that the buffers are positioned at 128-byte page boundaries, they have to be placed at
+; unorthodox start positoins. Refer to these notes when putting the buffers in RAM:
+;
+;       snapshotBuf1a:.64       Bank 03.2       cblock 0x1b0
+;       snapshotBuf1b:.64       Bank 04         cblock 0x220
+;
+;       snapshotBuf2a:.48       Bank 06.4       cblock 0x340
+;       snapshotBuf2b:.80       Bank 07         cblock 0x3a0
+;
+;       snapshotBuf3a:.32       Bank 09.6       cblock 0x4d0
+;       snapshotBuf3b:.80       Bank 10         cblock 0x520
+;       snapshotBuf3c:.16       Bank 11         cblock 0x5a0
+;
+; Since the buffers cross bank boundaries, they are accessed through Linear Data Memory. Formula for
+; determining the linear address of a variable in RAM (I think it only works for variables located 
+; in Bank 0 through Bank 11):
+;
+;   OFFSET                  EQU (variable & 0x7f) - 0x20
+;   LINEAR_ADDR             EQU ((variable/.128)*.80)+0x2000+variable
+;   LINEAR_LOC_H            EQU high LINEAR_ADDR
+;   LINEAR_LOC_L            EQU low LINEAR_ADDR
 ;
 ; ----------------
-;
-; Clock Map Buffering
-;
-; Clock Map buffer handling is similar to the Sample Buffering described above, but only two
-; buffers are needed: a catch buffer and a xmt buffer.
-;
-; Two buffers are used: mapBuf1 and mapBuf2.
-;
-; There are two buffer pointers used: mapCatchBuf and mapXmtBuf. Each pointer is assigned to
-; one of the mapBuf* buffers.
-;
-; When a request is made for peak data transmission to the Master PIC, the mapCatchBuf and
-; mapXmtBuf pointer values are swapped. Thus the current data will be preserved and new data will
-; be stored in a different buffer.
-;
-; Unlike the Sample Buffer, map data is always valid regardless of the state of the
-; peakFlags.NEW_DATA flag.
-;
-; Buffer Swapping Process:
-;
-; collect samples in mapCatchBuf
-;
-; when Peak Data transmit is requested:
-;   swap mapCatchBuf and mapXmtBuf, transmit mapXmtBuf
 ;
 ;--------------------------------------------------------------------------------------------------
 ; Notes on PCLATH
@@ -527,10 +512,10 @@ AD_CHANNEL_CODE    EQU     b'00100101'
     pbScratch4
 
     rundataXmtBufH          ; xmt buffer can be in here, but catch buf needs to be in common RAM
-    rundataXmtBufL          ; see notes at top of file "Rundata Buffering" //WIP HSS// -- add notes to top of the freaking file
+    rundataXmtBufL          ; see notes at top of file "Rundata Buffering"
     
     snapXmtBufH             ; xmt buffer can be in here, but catch bufs needs to be in common RAM
-    snapXmtBufL             ; see notes at top of file "Snapshot Buffering" //WIP HSS// -- add notes to top of the freaking file
+    snapXmtBufL             ; see notes at top of file "Snapshot Buffering"
 
  endc
  
@@ -565,22 +550,22 @@ AD_CHANNEL_CODE    EQU     b'00100101'
 ; Bank 03.2 - Variables for snapshot buffer 2
 ;
 ; This is one of the three snapshot buffers used for the snapshot of the 
-; greatest absolute A/D value. See notes at top of file "Snapshot 
-; Bufferring". //WIP HSS// -- add comments to top
+; greatest absolute A/D value. 
 ;
-; The other two snapshot buffers must be placed at Bank 6.4 and Bank 9.6.
+; See notes at top of file "Snapshot Bufferring"
 ;
+; The other two snapshot buffers must start at Bank 06.4 and Bank 09.6.
 ;
  
  cblock 0x1b0               ; starting address
 
-    snapShotBuf1:SNAPSHOT_BUF_LEN
+    snapshotBuf1a:.64
 
  endc
  
 ; Compute address of snapShotBuf1 in linear data memory for use as a large buffer
-SNAP_BUF1_OFFSET        EQU (snapShotBuf1 & 0x7f) - 0x20
-SNAP_BUF1_LINEAR_ADDR   EQU ((snapShotBuf1/.128)*.80)+0x2000+SNAP_BUF1_OFFSET
+SNAP_BUF1_OFFSET        EQU (snapshotBuf1a & 0x7f) - 0x20
+SNAP_BUF1_LINEAR_ADDR   EQU ((snapshotBuf1a/.128)*.80)+0x2000+SNAP_BUF1_OFFSET
 SNAP_BUF1_LINEAR_LOC_H  EQU high SNAP_BUF1_LINEAR_ADDR
 SNAP_BUF1_LINEAR_LOC_L  EQU low SNAP_BUF1_LINEAR_ADDR
  
@@ -594,6 +579,8 @@ SNAP_BUF1_LINEAR_LOC_L  EQU low SNAP_BUF1_LINEAR_ADDR
 ;
 
  cblock 0x220               ; starting address
+ 
+    snapshotBuf1b:.64
   
  endc
   
@@ -641,22 +628,23 @@ RUNDATA_BUF1_ADDRESS_L  EQU low maxPeak1
 ; Bank 06.4 - Variables for snapshot buffer 2
 ;
 ; This is one of the three snapshot buffers used for the snapshot of the 
-; greatest absolute A/D value. See notes at top of file "Snapshot 
-; Bufferring". //WIP HSS// -- add comments to top
+; greatest absolute A/D value. 
+; 
+; See notes at top of file "Snapshot Bufferring"
 ;
-; The other two snapshot buffers must be placed at Bank 3.2 and Bank 9.6.
+; The other two snapshot buffers must start at Bank 03.2 and Bank 09.6.
 ;
 
  
  cblock 0x340               ; starting address
 
-    snapShotBuf2:SNAPSHOT_BUF_LEN
+    snapshotBuf2a:.48
 
  endc
  
 ; Compute address of snapShotBuf2 in linear data memory for use as a large buffer
-SNAP_BUF2_OFFSET        EQU (snapShotBuf2 & 0x7f) - 0x20
-SNAP_BUF2_LINEAR_ADDR   EQU ((snapShotBuf2/.128)*.80)+0x2000+SNAP_BUF2_OFFSET
+SNAP_BUF2_OFFSET        EQU (snapshotBuf2a & 0x7f) - 0x20
+SNAP_BUF2_LINEAR_ADDR   EQU ((snapshotBuf2a/.128)*.80)+0x2000+SNAP_BUF2_OFFSET
 SNAP_BUF2_LINEAR_LOC_H  EQU high SNAP_BUF2_LINEAR_ADDR
 SNAP_BUF2_LINEAR_LOC_L  EQU low SNAP_BUF2_LINEAR_ADDR
 
@@ -664,14 +652,14 @@ SNAP_BUF2_LINEAR_LOC_L  EQU low SNAP_BUF2_LINEAR_ADDR
 ;--------------------------------------------------------------------------
  
 ;--------------------------------------------------------------------------
-; Bank 07 - Variables for snapshot buffer 3 continued
+; Bank 07 - Variables for snapshot buffer 2 continued
 ;
-; The snapshot buffer runs over into this bank.
+; The snapshot buffer occupies this entire bank.
 ;
   
  cblock 0x3a0                ; starting address
 
-
+    snapshotBuf2b:.80
   
  endc
   
@@ -719,8 +707,9 @@ RUNDATA_BUF2_ADDRESS_L  EQU low maxPeak2
 ; Bank 09.6 - Variables for snapshot buffer 3
 ;
 ; This is one of the three snapshot buffers used for the snapshot of the 
-; greatest absolute A/D value. See notes at top of file "Snapshot 
-; Bufferring". //WIP HSS// -- add comments to top
+; greatest absolute A/D value. 
+;
+; See notes at top of file "Snapshot Bufferring"
 ;
 ; The other two snapshot buffers must be placed at Bank 3.2 and Bank 6.4.
 ;
@@ -728,13 +717,13 @@ RUNDATA_BUF2_ADDRESS_L  EQU low maxPeak2
  
  cblock 0x4d0               ; starting address
 
-    snapShotBuf3:SNAPSHOT_BUF_LEN
+    snapshotBuf3a:.32
 
  endc
  
 ; Compute address of snapShotBuf3 in linear data memory for use as a large buffer
-SNAP_BUF3_OFFSET        EQU (snapShotBuf3 & 0x7f) - 0x20
-SNAP_BUF3_LINEAR_ADDR   EQU ((snapShotBuf3/.128)*.80)+0x2000+SNAP_BUF3_OFFSET
+SNAP_BUF3_OFFSET        EQU (snapshotBuf3a & 0x7f) - 0x20
+SNAP_BUF3_LINEAR_ADDR   EQU ((snapshotBuf3a/.128)*.80)+0x2000+SNAP_BUF3_OFFSET
 SNAP_BUF3_LINEAR_LOC_H  EQU high SNAP_BUF3_LINEAR_ADDR
 SNAP_BUF3_LINEAR_LOC_L  EQU low SNAP_BUF3_LINEAR_ADDR
 
@@ -744,10 +733,12 @@ SNAP_BUF3_LINEAR_LOC_L  EQU low SNAP_BUF3_LINEAR_ADDR
 ;--------------------------------------------------------------------------
 ; Bank 10 - Variables for snapshot buffer 3 continued
 ;
-; The snapshot buffer runs over into this bank.
+; The snapshot buffer occupies this entire bank.
 ;
 
  cblock 0x520                ; starting address
+ 
+    snapshotBuf3b:.80
 
  endc
   
@@ -755,9 +746,14 @@ SNAP_BUF3_LINEAR_LOC_L  EQU low SNAP_BUF3_LINEAR_ADDR
 ;--------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------
-; Bank 11 - 80 bytes of free space
+; Bank 11 - Variables for snapshot buffer 3 continued
+;
+; The snapshot buffer runs over into this bank.
+;
 
  cblock 0x5a0                ; starting address
+ 
+    snapshotBuf3c:.16
 
  endc
 
@@ -789,22 +785,22 @@ SNAP_BUF3_LINEAR_LOC_L  EQU low SNAP_BUF3_LINEAR_ADDR
 							; bit 7: 0 =
     
     rundataCatchBufH        ; run data catch buffer has to be here, but xmt can be in a normal bank
-    rundataCatchBufL        ; see notes at top of file "Rundata Buffering" //WIP HSS// -- add some notes, buddy
+    rundataCatchBufL        ; see notes at top of file "Rundata Buffering"
     
     lastADSample            ; last A/D sample recorded
     lastADAbsolute          ; absolute value of lastADSample
     lastSampleClk           ; clock position of the last A/D sample recorded
     lastSampleLoc           ; linear location of the last A/D sample recorded
     
-    ; Two snapshot buffers required -- see notes at top of file "Snapshot Bufferring" //WIP HSS// -- make notes
+    ; Two snapshot buffers required here -- see notes at top of file "Snapshot Bufferring"
     snapCatchBufH
     snapCatchBufL
     snapPeakBufH
     snapPeakBufL
     
-    ; Values below are for the snapshot buffer -- see notes at top of file "Snapshot Bufferring" //WIP HSS// -- make notes
+    ; Values below are for the snapshot buffer -- see notes at top of file "Snapshot Bufferring"
     peakADAbsolute          ; greatest A/D absolute value
-    snapBufCnt              ; number of values to continue to put in the snapshot buffer
+    snapBufCnt              ; number of samples in Snapshot Buffer still needed for 64 after peak
     
  endc
     
@@ -2292,9 +2288,9 @@ hiocExit:
 ; handleADInterrupt
 ;
 ; This function is called when a sample is ready in the A/D converter. The new sample is stored 
-; and used to process and handle data pertaining to the rundata buffer and the snapshot buffer.
+; and used to process and handle data pertaining to the Rundata and Snapshot buffers.
 ;
-; See notes at top of file "Rundata Buffering" and "Snapshot Buffering" //WIP HSS// -- add notes to top of file
+; See notes at top of file "Rundata Buffering" and "Snapshot Buffering"
 ;
 ; ON ENTRY:
 ;
