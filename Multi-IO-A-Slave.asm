@@ -284,9 +284,11 @@ PIC_GET_LAST_AD_VALUE_CMD       EQU .7
 I2C_RCV_BUF_LEN      EQU .5
 I2C_XMT_BUF_LEN      EQU .20
 
-MAP_BUF_LEN         EQU .24
+MAP_BUF_LEN         EQU .48
 SAMPLE_PREBUF_LEN   EQU .60             ; NOTE: this must always be an even number!
 SAMPLE_BUF_LEN      EQU .80
+      
+SNAPSHOT_BUF_LEN    EQU .128            ; NOTE: Must always be an even number!
 
 ; end of Defines
 ;--------------------------------------------------------------------------------------------------
@@ -315,7 +317,8 @@ SAMPLE_BUF_LEN      EQU .80
 
 ; CONFIG1
 ; __config 0xF9E4
- __CONFIG _CONFIG1, _FOSC_ECH & _WDTE_OFF & _PWRTE_OFF & _MCLRE_ON & _CP_OFF & _BOREN_OFF & _CLKOUTEN_ON & _IESO_OFF & _FCMEN_OFF
+ ;//DEBUG HSS//__CONFIG _CONFIG1, _FOSC_ECH & _WDTE_OFF & _PWRTE_OFF & _MCLRE_ON & _CP_OFF & _BOREN_OFF & _CLKOUTEN_ON & _IESO_OFF & _FCMEN_OFF
+ __CONFIG _CONFIG1, _FOSC_INTOSC & _WDTE_OFF & _PWRTE_OFF & _MCLRE_ON & _CP_OFF & _BOREN_OFF & _CLKOUTEN_ON & _IESO_OFF & _FCMEN_OFF ;//DEBUG HSS//
 ; CONFIG2
 ; __config 0xFFFF
  __CONFIG _CONFIG2, _WRT_ALL & _CPUDIV_NOCLKDIV & _USBLSCLK_48MHz & _PLLMULT_4x & _PLLEN_ENABLED & _STVREN_ON & _BORV_LO & _LPBOR_OFF & _LVP_OFF
@@ -420,6 +423,9 @@ UNUSED_FLAG1        EQU 1     ;
 
 COM_ERROR           EQU 0
 AD_OVERRUN          EQU 1
+    
+; bits in commonFlags
+BIT_RDY_STOP            EQU 0
 
 ; values for A/D register ADCON0 to select channel and enable A/D
 
@@ -444,14 +450,14 @@ AD_CHANNEL_CODE    EQU     b'00100101'
 ; Variables in RAM
 ;
 ; Note that you cannot use a lot of the data definition directives for RAM space (such as DB)
-; unless you are compiling object files and using a linker command file.  The cblock directive is
+; unless you are compiling object files and using a linker command file.  The  cblock directive is
 ; commonly used to reserve RAM space or Code space when producing "absolute" code, as is done here.
-; 
+;
 
-; Assign variables in RAM - Bank 0 - must set BSR to 0 to access
-; Bank 0 has 80 bytes of free space
+;--------------------------------------------------------------------------
+; Bank 00 - 80 bytes of free space
 
- cblock 0x20                ; starting address
+ cblock 0x020                ; starting address
 
     flags                   ; bit 0: 0 =
                             ; bit 1: 0 =
@@ -489,8 +495,6 @@ AD_CHANNEL_CODE    EQU     b'00100101'
     scratch9
     scratch10
 
-    i2cXmtBufPtrH
-    i2cXmtBufPtrL
     i2cXmtBuf:I2C_XMT_BUF_LEN
 
     i2cRcvBufPtrH
@@ -499,65 +503,22 @@ AD_CHANNEL_CODE    EQU     b'00100101'
 
  endc
 
-;-----------------
+; end Bank 00
+;--------------------------------------------------------------------------
+ 
+;--------------------------------------------------------------------------
+; Bank 01 - 80 bytes of free space - A/D related variables
 
-; Assign variables in RAM - Bank 1 - must set BSR to 1 to access
-; Bank 1 has 80 bytes of free space
+ cblock 0x0a0                ; starting address
 
- cblock 0xa0                ; starting address
-
-
- endc
-
-;-----------------
-
-; Assign variables in RAM - Bank 3 - must set BSR to 3 to access
-; Bank 2 has 80 bytes of free space
-
- cblock 0x120                ; starting address
-
-	block1PlaceHolder
-
- endc
-
-;-----------------
-
-; Assign A/D related variables, the Peak Data variables, and the Clock Peak Map in RAM - Bank 6
-; this bank has 80 bytes of free space
-
- cblock 0x320               ; starting address
-
-    peakFlags               ; bit 0: 0 = no new data, 1 = new data ready
-                            ; bit 1: 0 =
+    peakFlags               ; bit 0: 0 = 
+                            ; bit 1: 0 = 
                             ; bit 2: 0 =
                             ; bit 3: 0 =
                             ; bit 4: 0 =
                             ; bit 5: 0 =
 							; bit 6: 0 =
 							; bit 7: 0 =
-                            
-    lastADSample            ; the last A/D sample recorded
-    lastSampleClk           ; clock position of the last A/D sample recorded
-    lastSampleLoc           ; linear location of the last A/D sample recorded
-
-    maxPeak
-    maxPeakClk
-    maxPeakLoc
-    minPeak
-    minPeakClk
-    minPeakLoc
-
-    maxPeakSnap
-    maxPeakClkSnap
-    maxPeakLocSnap
-    minPeakSnap
-    minPeakClkSnap
-    minPeakLocSnap
-
-    maxABSPeak              ; maximum absolute value
-
-    peakBufFinishCnt
-    peakBufLastLoc
 
     pbScratch0
     pbScratch1
@@ -565,111 +526,290 @@ AD_CHANNEL_CODE    EQU     b'00100101'
     pbScratch3
     pbScratch4
 
-    catchBufH
-    catchBufL
-    peakBufH
-    peakBufL
-    xmtBufH
-    xmtBufL
-
-    mapCatchBufH
-    mapCatchBufL
-    mapXmtBufH
-    mapXmtBufL
+    rundataXmtBufH          ; xmt buffer can be in here, but catch buf needs to be in common RAM
+    rundataXmtBufL          ; see notes at top of file "Rundata Buffering" //WIP HSS// -- add notes to top of the freaking file
+    
+    snapXmtBufH             ; xmt buffer can be in here, but catch bufs needs to be in common RAM
+    snapXmtBufL             ; see notes at top of file "Snapshot Buffering" //WIP HSS// -- add notes to top of the freaking file
 
  endc
+ 
+; end Bank 01
+;--------------------------------------------------------------------------
 
-;-----------------
+;--------------------------------------------------------------------------
+; Bank 02 - 80 bytes of free space
 
-; Assign A/D Clock Peak Map in RAM - Bank 7
-; this bank has 80 bytes of free space
+ cblock 0x180               ; starting address
 
- cblock 0x3a0               ; starting address
+ endc
+  
+; end Bank 02
+;--------------------------------------------------------------------------
+  
+;--------------------------------------------------------------------------
+; Bank 03 - 16 bytes of free space
+;
+; Only 16 bytes available because of the Snapshot Buffer at Bank 3.2. For
+; more info, see notes at top of file "Snapshot Bufferring".
+;
+  
+ cblock 0x1a0               ; starting address
+ 
+ endc
+  
+; end Bank 03
+;--------------------------------------------------------------------------
+ 
+;--------------------------------------------------------------------------
+; Bank 03.2 - Variables for snapshot buffer 2
+;
+; This is one of the three snapshot buffers used for the snapshot of the 
+; greatest absolute A/D value. See notes at top of file "Snapshot 
+; Bufferring". //WIP HSS// -- add comments to top
+;
+; The other two snapshot buffers must be placed at Bank 6.4 and Bank 9.6.
+;
+;
+ 
+ cblock 0x1b0               ; starting address
+
+    snapShotBuf1:SNAPSHOT_BUF_LEN
+
+ endc
+ 
+; Compute address of snapShotBuf1 in linear data memory for use as a large buffer
+SNAP_BUF1_OFFSET        EQU (snapShotBuf1 & 0x7f) - 0x20
+SNAP_BUF1_LINEAR_ADDR   EQU ((snapShotBuf1/.128)*.80)+0x2000+SNAP_BUF1_OFFSET
+SNAP_BUF1_LINEAR_LOC_H  EQU high SNAP_BUF1_LINEAR_ADDR
+SNAP_BUF1_LINEAR_LOC_L  EQU low SNAP_BUF1_LINEAR_ADDR
+ 
+; end Bank 03.2
+;--------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------
+; Bank 04 - Variables for snapshot buffer 1 continued
+;
+; The snapshot buffer runs over into this bank.
+;
+
+ cblock 0x220               ; starting address
+  
+ endc
+  
+; end Bank 04
+;--------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------
+; Bank 05 - Variables for rundata buffer 1
+
+ cblock 0x2a0               ; starting address
+
+    maxPeak1                ; overall A/D max
+    maxPeakClk1             ; clock position of max A/D
+    maxPeakLoc1             ; linear location of max A/D
+    
+    minPeak1                ; overall A/D min
+    minPeakClk1             ; clock position of min A/D
+    minPeakLoc1             ; linear location of min A/D
 
     mapBuf1:MAP_BUF_LEN
-    mapBuf2:MAP_BUF_LEN
 
  endc
+ 
+RUNDATA_BUF1_ADDRESS_H  EQU high maxPeak1
+RUNDATA_BUF1_ADDRESS_L  EQU low maxPeak1
+  
+; end Bank 05
+;--------------------------------------------------------------------------
+  
+;--------------------------------------------------------------------------
+; Bank 06 - 32 bytes of free space
+;
+; Only 32 bytes available because of the Snapshot Buffer at Bank 6.4. For
+; more info, see notes at top of file "Snapshot Bufferring".
+;
 
-;-----------------
+ cblock 0x320               ; starting address
 
-; Assign A/D sampling pre-buffer and related variables in RAM - Bank 8
-;   see notes at top of file "Sample Pre-Buffering"
-; this bank has 80 bytes of free space
+ endc
+ 
+; end Bank 06
+;--------------------------------------------------------------------------
+ 
+;--------------------------------------------------------------------------
+; Bank 06.4 - Variables for snapshot buffer 2
+;
+; This is one of the three snapshot buffers used for the snapshot of the 
+; greatest absolute A/D value. See notes at top of file "Snapshot 
+; Bufferring". //WIP HSS// -- add comments to top
+;
+; The other two snapshot buffers must be placed at Bank 3.2 and Bank 9.6.
+;
+
+ 
+ cblock 0x340               ; starting address
+
+    snapShotBuf2:SNAPSHOT_BUF_LEN
+
+ endc
+ 
+; Compute address of snapShotBuf2 in linear data memory for use as a large buffer
+SNAP_BUF2_OFFSET        EQU (snapShotBuf2 & 0x7f) - 0x20
+SNAP_BUF2_LINEAR_ADDR   EQU ((snapShotBuf2/.128)*.80)+0x2000+SNAP_BUF2_OFFSET
+SNAP_BUF2_LINEAR_LOC_H  EQU high SNAP_BUF2_LINEAR_ADDR
+SNAP_BUF2_LINEAR_LOC_L  EQU low SNAP_BUF2_LINEAR_ADDR
+
+; end Bank 06.4
+;--------------------------------------------------------------------------
+ 
+;--------------------------------------------------------------------------
+; Bank 07 - Variables for snapshot buffer 3 continued
+;
+; The snapshot buffer runs over into this bank.
+;
+  
+ cblock 0x3a0                ; starting address
+
+
+  
+ endc
+  
+; end Bank 07
+;--------------------------------------------------------------------------
+
+;--------------------------------------------------------------------------
+; Bank 08 - Variables for run data buffer 2
 
  cblock 0x420               ; starting address
  
-    numPreSamples
-    maxNumPreSamples        ; maximum number of A/D values stored in pre-buffer at any one time
-                            ; should never be bigger than the size of the buffer, otherwise it
-                            ; is an overrun condition
-    inPreBufH               ; insertion pointer for sample pre-buffer
-    inPreBufL
-    outPreBufH              ; extraction pointer for sample pre-buffer
-    outPreBufL
+    maxPeak2                ; overall A/D max
+    maxPeakClk2             ; clock position of max A/D
+    maxPeakLoc2             ; linear location of max A/D
+    
+    minPeak2                ; overall A/D min
+    minPeakClk2             ; clock position of min A/D
+    minPeakLoc2             ; linear location of min A/D
 
-    samplePreBuf:SAMPLE_PREBUF_LEN
-
- endc
-
-;-----------------
-
-; Assign A/D Sample Buffer 1 in RAM - Bank 9 - see notes at top of file "Sample Buffering"
-; this bank has 80 bytes of free space
-
- cblock 0x4a0                ; starting address
-
-    sampleBuf1:SAMPLE_BUF_LEN
+    mapBuf2:MAP_BUF_LEN
 
  endc
+ 
+RUNDATA_BUF2_ADDRESS_H  EQU high maxPeak2
+RUNDATA_BUF2_ADDRESS_L  EQU low maxPeak2
 
-;-----------------
+; end Bank 08
+;--------------------------------------------------------------------------
+  
+;--------------------------------------------------------------------------
+; Bank 09 - 48 bytes of free space
+;
+; Only 48 bytes available because of the Snapshot Buffer at Bank 6.6. For
+; more info, see notes at top of file "Snapshot Bufferring".
+;
 
-; Assign A/D Sample Buffer 2 in RAM - Bank 10 - see notes at top of file "Sample Buffering"
-; this bank has 80 bytes of free space
+ cblock 0x4a0               ; starting address
+
+ endc
+ 
+; end Bank 09
+;--------------------------------------------------------------------------
+ 
+;--------------------------------------------------------------------------
+; Bank 09.6 - Variables for snapshot buffer 3
+;
+; This is one of the three snapshot buffers used for the snapshot of the 
+; greatest absolute A/D value. See notes at top of file "Snapshot 
+; Bufferring". //WIP HSS// -- add comments to top
+;
+; The other two snapshot buffers must be placed at Bank 3.2 and Bank 6.4.
+;
+
+ 
+ cblock 0x4d0               ; starting address
+
+    snapShotBuf3:SNAPSHOT_BUF_LEN
+
+ endc
+ 
+; Compute address of snapShotBuf3 in linear data memory for use as a large buffer
+SNAP_BUF3_OFFSET        EQU (snapShotBuf3 & 0x7f) - 0x20
+SNAP_BUF3_LINEAR_ADDR   EQU ((snapShotBuf3/.128)*.80)+0x2000+SNAP_BUF3_OFFSET
+SNAP_BUF3_LINEAR_LOC_H  EQU high SNAP_BUF3_LINEAR_ADDR
+SNAP_BUF3_LINEAR_LOC_L  EQU low SNAP_BUF3_LINEAR_ADDR
+
+; end Bank 09.6
+;--------------------------------------------------------------------------
+  
+;--------------------------------------------------------------------------
+; Bank 10 - Variables for snapshot buffer 3 continued
+;
+; The snapshot buffer runs over into this bank.
+;
 
  cblock 0x520                ; starting address
 
-    sampleBuf2:SAMPLE_BUF_LEN
-
  endc
+  
+; end Bank 10
+;--------------------------------------------------------------------------
 
-;-----------------
-
-; Assign A/D Sample Buffer 3 in RAM - Bank 11 - see notes at top of file "Sample Buffering"
-; this bank has 80 bytes of free space
+;--------------------------------------------------------------------------
+; Bank 11 - 80 bytes of free space
 
  cblock 0x5a0                ; starting address
 
-    sampleBuf3:SAMPLE_BUF_LEN
+ endc
+
+; end Bank 11
+;--------------------------------------------------------------------------
+  
+;--------------------------------------------------------------------------
+; Bank 12 - 48 bytes of free space
+
+ cblock 0x620                ; starting address
 
  endc
 
-;-----------------
+; end Bank 12
+;--------------------------------------------------------------------------
+  
+;--------------------------------------------------------------------------
+; Common Ram mirrored in all banks - 16 bytes of free space
 
-; NOTE: use of this block by interrupts is not necessary with the PIC16f1459 as it pushes critical
-; registers onto a stack.
-;
-; Define variables in the memory which is mirrored in all 4 RAM banks.  This area is usually used
-; by the interrupt routine for saving register states because there is no need to worry about
-; which bank is current when the interrupt is invoked.
-; On the PIC16F628A, 0x70 thru 0x7f is mirrored in all 4 RAM banks.
-
-; NOTE:
-; This block cannot be used in ANY bank other than by the interrupt routine.
-; The mirrored sections:
-;
-;	Bank 0		Bank 1		Bank 2		Bank3
-;	70h-7fh		f0h-ffh		170h-17fh	1f0h-1ffh
-;
-
- cblock	0x70
-    W_TEMP
-    FSR0L_TEMP
-    FSR0H_TEMP
-    STATUS_TEMP
-    PCLATH_TEMP	
+ cblock	0x070
+  
+    commonFlags             ; bit 0: 0 = ready to send next byte, 1 = stop condition (BIT_RDY_STOP)
+                            ; bit 1: 0 =
+                            ; bit 2: 0 =
+                            ; bit 3: 0 =
+                            ; bit 4: 0 =
+                            ; bit 5: 0 =
+							; bit 6: 0 =
+							; bit 7: 0 =
+    
+    rundataCatchBufH        ; run data catch buffer has to be here, but xmt can be in a normal bank
+    rundataCatchBufL        ; see notes at top of file "Rundata Buffering" //WIP HSS// -- add some notes, buddy
+    
+    lastADSample            ; last A/D sample recorded
+    lastADAbsolute          ; absolute value of lastADSample
+    lastSampleClk           ; clock position of the last A/D sample recorded
+    lastSampleLoc           ; linear location of the last A/D sample recorded
+    
+    ; Two snapshot buffers required -- see notes at top of file "Snapshot Bufferring" //WIP HSS// -- make notes
+    snapCatchBufH
+    snapCatchBufL
+    snapPeakBufH
+    snapPeakBufL
+    
+    ; Values below are for the snapshot buffer -- see notes at top of file "Snapshot Bufferring" //WIP HSS// -- make notes
+    peakADAbsolute          ; greatest A/D absolute value
+    snapBufCnt              ; number of values to continue to put in the snapshot buffer
+    
  endc
+    
+; end Common Ram
+;--------------------------------------------------------------------------
 
 ; end of Variables in RAM
 ;--------------------------------------------------------------------------------------------------
@@ -703,11 +843,6 @@ start:
 mainLoop:
 
     call    handleI2CCommand    ; checks for incoming command on I2C bus
-
-    banksel numPreSamples       ; process if interrupt routine has added samples to the pre-buffer
-    movf    numPreSamples,F
-    btfss   STATUS,Z
-    call    processADSamples
 
     goto    mainLoop
     
@@ -745,14 +880,11 @@ setup:
 
     call    setupI2CSlave7BitMode ; prepare the I2C serial bus for use
 
-    call    setupADVars     ; setup A/D sampling variables and pointers
+    call    setupRundataAndSnapshotVars ; setup rundata and snapshot variables and pointers
 
     call    setupADConverter ; prepare A/D converter for use
 
 ;start of hardware configuration
-
-    clrf   FSR0H            ;high byte of indirect addressing pointers -> 0
-    clrf   FSR1H
 
     clrf    INTCON          ; disable all interrupts
 
@@ -849,7 +981,16 @@ setupClock:
 
     ; Since each slave pic is set up to use an external clock (see notes at top of page),
     ; there is no need to set anything programmatically
+    
+    ;//DEBUG HSS// -- remove later (hopefully)
+    banksel OSCCON
 
+    bcf     OSCCON, IRCF0   ; choose internal clock frequency of 32 MHz (after PLL multiplier)
+    bsf     OSCCON, IRCF1   
+    bsf     OSCCON, IRCF2
+    bsf     OSCCON, IRCF3   ; IRCF<3:0> set to 1110 -> 8 MHz before PLL multiplier
+    ;//DEBUG HSS// -- end remove later
+    
     return
 
 ; end of setupClock
@@ -1154,188 +1295,6 @@ setupADConverter:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; processADSamples
-;
-; Processes all A/D samples which have been placed in the pre-buffer by the A/D interrupt routine
-; since the last time this method was called.
-;
-; Each value is converted from unsigned to signed such that 0V input to the board is at value of 0.
-; The absolute value is then compared with the value already in the map buffer at the same clock
-; position as the new sample. If the new sample is greater, the old value is replaced.
-;
-; For peak capture, the max and min values of the new sample replace the old peak values if the new
-; is greater/less than the old peaks. The clock positions for those peaks are stored as well.
-;
-; If a new peak is detected (absolute value) a count down counter is started. When that reaches 0,
-; the peaks and and clocks are stored and the catch buffer and peak buffer are switched so that the
-; buffer for the stored peak is preserved (now in the peak buffer). There is only one peak buffer;
-; it contains the data for the highest absolute value peak, either negative or positive.
-; See notes at the top of the page for more details.
-;
-; Sample Value Sign
-;
-; The raw value from the A/D is unsigned 0-255 where 0 is 0V and 255 is Vcc.
-; The board is designed so that 0V input is actually at Vcc/2 at the A/D input.
-; The A/D value can be converted to signed by simply flipping bit 7, such that -128 is 0V and
-; +127 is Vcc at the A/D input.
-;
-; NOTE: before converting, force value of 0 to value of 1. This has the effect after the conversion
-;       of limiting the negative swing to -127, which can be converted to +127 with absolute value.
-;       When trying to get abs value of -128 (0 before the conversion), it returns -128 as there is
-;       no +128 in an 8 bit value.
-;
-; In some cases the value is left unsigned as it is easy to check for min/max peaks as there is no
-; sign to worry about.
-;
-
-processADSamples:
-
-    banksel lastADSample
-    movf    outPreBufH,W         ; set pointer to current pre-buffer extraction location
-    movwf   FSR0H
-    movf    outPreBufL,W
-    movwf   FSR0L
-
-    banksel peakFlags
-    movf    catchBufH,W         ; set pointer to current catch buffer location
-    movwf   FSR1H
-    movf    catchBufL,W
-    movwf   FSR1L
-
-    banksel numPreSamples       ; store the number of samples in pbScratch0
-    movf    numPreSamples,W
-    banksel pbScratch0
-    movwf   pbScratch0
-
-    ; transfer the new samples in pre-buffer to the catch buffer
-
-padsLoop1:
-
-    moviw   FSR0++              ; move sample between buffers
-    movwi   FSR1++
-
-    movwf   pbScratch1          ; store the raw value temporarily
-
-    btfsc   STATUS,Z            ; limit bottom end to 1 (-127 as a signed value) see notes above
-    incf    WREG,F
-
-    xorlw   0x80                ; flip bit 7 to convert to signed value with 0 at center voltage
-
-    ; get absolute value of the sample
-
-    btfss   WREG,7              ; check for positive value
-    goto    padsPosNum          ; don't flip if positive
-
-    comf    WREG,W              ; flip value to positive
-    addlw   .1
-
-    movwf   pbScratch2          ; store the sample abs value temporarily
-
-padsPosNum:
-
-    movf    FSR1H,W             ; store FSR1 temporarily
-    movwf   pbScratch3
-    movf    FSR1L,W
-    movwf   pbScratch4
-
-    movf    mapCatchBufH,W      ; add clock position to map start to get address of the clock pos
-    movwf   FSR1H               ;   in the map buffer
-    movf    mapCatchBufL,W      
-    addwf   INDF0,W             ; add clock position (leave FSR0 pointing at clock value)
-    movwf   FSR1L
-
-    movf    pbScratch2,W        ; compare abs value sample with value already in map
-    subwf   INDF1,W
-    btfss   STATUS,C            ; C = 1 => W > f, so store new value in map
-    goto    padsNewLTEQMap      ; new value <= old value, so leave old value
-
-    movf    pbScratch2,W        ; store new value in map buffer
-    movwf   INDF1
-
-padsNewLTEQMap:
-
-    subwf   maxABSPeak,W        ; compare abs value sample with current abs value peak
-    btfss   STATUS,C            ; C = 1 => W > f, so store new value in peak
-    goto    padsNewLTEQAbsPeak  ; new value <= old value, so leave old value
-
-    movf    pbScratch2,W        ; store new value in abs value peak
-    movwf   maxABSPeak
-
-    movlw   (SAMPLE_BUF_LEN / .2)   ; fill in half of buffer after peak so it will be centered
-    movwf   peakBufFinishCnt
-
-padsNewLTEQAbsPeak:
-
-    movf    pbScratch1,W        ; get raw sample for max peak detection
-    subwf   maxPeak,W           ; compare new sample with max peak
-    btfss   STATUS,C            ; C=1 => W>f, so store new value in peak
-    goto    padsNewLTEQMaxPeak
-
-    movf    pbScratch1,W        ; store new sample as peak
-    movwf   maxPeak
-    moviw   FSR0++
-    movwf   maxPeakClk          ; store clock position of peak (location not yet implemented)
-
-    goto    checkPeakBufFinishCnt
-
-padsNewLTEQMaxPeak:
-
-    movf    pbScratch1,W        ; get raw sample for min peak detection
-    subwf   maxPeak,W           ; compare new sample with min peak
-    btfsc   STATUS,C            ; C=0 => W<=f, so store new value in peak
-    goto    checkPeakBufFinishCnt
-
-    movf    pbScratch1,W
-    movwf   minPeak
-    moviw   FSR0++
-    movwf   minPeakClk          ; store clock position of peak (location not yet implemented)
-
-checkPeakBufFinishCnt:
-
-    ; decrement the peak buffer finish counter if it is not zero
-    ; when it reaches zero, second half of buffer has been filled after peak, so buffers are
-    ; swapped to preserve the buffer
-
-    movf    checkPeakBufFinishCnt,F     ;if counter already zero, ignore
-    btfsc   STATUS,Z
-    goto    bufNotFinished
-
-    decfsz  checkPeakBufFinishCnt,F     ;count down
-    goto    bufNotFinished
-
-    ; second half of buffer filled after last peak, so preserve peak data
-    call    preservePeakData
-
-bufNotFinished:
-
-    movf    pbScratch3,W        ; restore FSR1
-    movwf   FSR1H
-    movf    pbScratch4,W
-    movwf   FSR1L
-
-    decfsz  pbScratch0,F        ; loop until all samples in pre-buffer processed
-    goto    padsLoop1
-
-    ; store the updated pointers
-
-    banksel lastADSample
-    movf    FSR0H,W
-    movwf   outPreBufH
-    movf    FSR0L,W
-    movwf   outPreBufL
-
-    banksel peakFlags
-    movf    FSR1H,W
-    movwf   catchBufH
-    movf    FSR1L,W
-    movwf   catchBufL
-
-    return
-
-; end of processADSamples
-;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
 ; getAllStatus
 ;
 ; Transmits various status, flags, and other values back to the Master via I2C. Clock stretching is
@@ -1353,15 +1312,10 @@ bufNotFinished:
 getAllStatus:
 
     ; set buffer pointer to transmit buffer start
-    banksel i2cXmtBuf
+    banksel i2cXmtBuf                   ; load FSR0 with buffer pointer
     movlw   high i2cXmtBuf
-    movwf   i2cXmtBufPtrH
-    movlw   i2cXmtBuf
-    movwf   i2cXmtBufPtrL
-
-    movf    i2cXmtBufPtrH, W            ; load FSR0 with buffer pointer
     movwf   FSR0H
-    movf    i2cXmtBufPtrL, W
+    movlw   low i2cXmtBuf
     movwf   FSR0L
 
     ; store various status values in the transmit buffer
@@ -1391,10 +1345,6 @@ getAllStatus:
 
     banksel lastADSample
 
-    movf    maxNumPreSamples,W
-    clrf    maxNumPreSamples
-    movwi   FSR0++
-
     movf    lastADSample,W
     movwi   FSR0++
 
@@ -1413,8 +1363,20 @@ getAllStatus:
     movwf   scratch0
 
     call    calcAndStoreCheckSumForI2CXmtBuf
+    
+    banksel i2cXmtBuf                   ; load FSR0 with buffer pointer
+    movlw   high i2cXmtBuf
+    movwf   FSR0H
+    movlw   low i2cXmtBuf
+    movwf   FSR0L
+getAllStatus_xmtLoop:
+    moviw   FSR0++
+    movwf   FSR1L
+    call    sendByteViaI2C
+    btfss   commonFlags,BIT_RDY_STOP    ; loop through unil stop condition received
+    goto    getAllStatus_xmtLoop
 
-    goto sendI2CBuffer
+    goto    cleanUpI2CAndReturn         ; made it to here, so stop condition received -- bail out
 
 ; end getAllStatus
 ;--------------------------------------------------------------------------------------------------
@@ -1422,13 +1384,11 @@ getAllStatus:
 ;--------------------------------------------------------------------------------------------------
 ; calcAndStoreCheckSumForI2CXmtBuf
 ;
-; Calculates the checksum for a series of bytes in the i2cXmtBuf buffer, the address of which
-; should be in i2cXmtBufPtrH:L
+; Calculates the checksum for a series of bytes in the i2cXmtBuf buffer.
 ;
 ; On Entry:
 ;
 ; scratch0 contains number of bytes in series
-; i2cXmtBufPtrH:i2cXmtBufPtrL contains address of the start of the buffer
 ;
 ; On Exit:
 ;
@@ -1438,10 +1398,10 @@ getAllStatus:
 
 calcAndStoreCheckSumForI2CXmtBuf:
 
-    banksel i2cXmtBufPtrH                   ; load FSR0 with buffer pointer
-    movf    i2cXmtBufPtrH, W            
+    banksel i2cXmtBuf                   ; load FSR0 with buffer pointer
+    movlw   high i2cXmtBuf
     movwf   FSR0H
-    movf    i2cXmtBufPtrL, W
+    movlw   low i2cXmtBuf
     movwf   FSR0L
 
     goto    calculateAndStoreCheckSum
@@ -1514,33 +1474,27 @@ sumSLoop:                       ; sum the series
 
 ; end sumSeries
 ;--------------------------------------------------------------------------------------------------
-
+    
 ;--------------------------------------------------------------------------------------------------
-; sendI2CBuffer
+; sendByteViaI2C
 ;
-; Sends bytes from the buffer pointed to by i2cXmtBufPtrH:L through the I2C bus. The number of bytes
-; sent will be controlled by the Master. If the Master requests more bytes than have been loaded
-; into the buffer, the extra bytes sent will be whatever happens to be after the last valid byte
-; in the buffer.
+; Sends one byte via I2C.
 ;
-; On Entry:
+; ON ENTRY:
 ;
-; i2cXmtBufPtrH:i2cXmtBufPtrL contains address of the buffer to be tranw
+; FSR1L = byte to send
+;
+; ON EXIT:
+;
+; commonFlags,BIT_RDY_STOP = 0  if ready to send next byte
+; commonFlags,BIT_RDY_STOP = 1  if stop condition received
 ;
 
-sendI2CBuffer:
-
-    banksel i2cXmtBuf
-    movf    i2cXmtBufPtrH, W            ; load FSR0 with buffer pointer
-    movwf   FSR0H
-    movf    i2cXmtBufPtrL, W
-    movwf   FSR0L
-
-sIBXmtLoop:
+sendByteViaI2C:
 
     call    clearWCOL                   ; make sure error flag is reset to allow sending
 
-    moviw   FSR0++                      ; send next byte in buffer
+    movf    FSR1L,W                     ; send byte
     movwf   SSP1BUF
 
     call    clearSSP1IF                 ; clear the I2C interrupt flag
@@ -1548,98 +1502,149 @@ sIBXmtLoop:
 
     call    waitForSSP1IFHighOrStop     ; wait for byte or stop condition to be received
 
-    btfss   STATUS,Z
-    goto    cleanUpI2CAndReturn          ; bail out when stop condition received
+    btfsc   commonFlags,BIT_RDY_STOP
+    return                              ; need to stop and bail out
 
     banksel SSP1CON2
     btfss   SSP1CON2,ACKSTAT
-    goto    sIBXmtLoop
-
+    return                              ; good, so next byte can be sent
+    
     call    waitForSSP1IFHighOrStop     ; wait for byte or stop condition to be received
-    goto    cleanUpI2CAndReturn         ; reset all status and error flags
+    bsf     commonFlags,BIT_RDY_STOP    ; make sure to stop and bail out no matter what
+    return
 
-; end sendI2CBuffer
+; end sendByteViaI2C
 ;--------------------------------------------------------------------------------------------------
-
+    
 ;--------------------------------------------------------------------------------------------------
 ; getRunData
 ;
-; Puts all of the run data into the xmt buffer and then transmits it to the Master PIC via I2C. This
-; function should be called when the PIC_GET_RUN_DATA_CMD is received from the Master PIC.
+; Transmits all of the run data it to the Master PIC via I2C. This function should be called when
+; the PIC_GET_RUN_DATA_CMD is received from the Master PIC.
 ;
 ; Run data currently consists of:
 ;   02 bytes    overall min
 ;   02 bytes    overall max
 ;   48 bytes    clock map
+;   01 bytes    absolute peak
 ;   ---
-;   52 bytes    total
+;   53 bytes    total
 ;
 ; This function is done in the main code and not in interrupt code. It is expected that the A/D
 ; converter interrupt will occur one or more times during transmission of the peak data.
 ;
 
 getRunData:
-
-    banksel i2cXmtBuf                   ; set buffer pointer to transmit buffer start
-    movlw   high i2cXmtBuf
-    movwf   i2cXmtBufPtrH
-    movlw   low i2cXmtBuf
-    movwf   i2cXmtBufPtrL
     
-    movf    i2cXmtBufPtrH, W            ; load FSR0 with buffer pointer
+    banksel peakFlags
+    
+    ; reset xmt buffer since it was transmitted last time
+    movlw   rundataXmtBufH
     movwf   FSR0H
-    movf    i2cXmtBufPtrL, W
+    movlw   rundataXmtBufL
     movwf   FSR0L
-
-    banksel peakFlags                   ; select bank with A/D related values
+    call    resetRundataBuffer
     
-    ; load upper bytes of overall min and max with 0s
-    movlw   0x00
-    movwf   INDF0                       ; fill max upper byte with 0s
-    movwi   2[FSR0]                     ; fill min upper byte with 0s
+; end reset xmt buffer
     
-    movf    maxPeak,W                   ; load max lower byte into xmt buffer
-    movwi   1[FSR0]
+; switch rundata xmt and catch buffers
     
-    ; load overall min into xmt buffer
-    movf    minPeak,W                   ; load min lower byte into xmt buffer
-    movwi   3[FSR0]
+    movf    rundataCatchBufH,W  ; temporarily store the catch buffer pointer
+    movwf   FSR0H
+    movf    rundataCatchBufL,W
+    movwf   FSR0L
     
-    movlw   0x00                        ; set min and max to anti-peaks
-    movwf   maxPeak
-    movlw   0xff
-    movwf   minPeak
+    movf    rundataXmtBufH,W    ; point catch buffer pointer at where the xmt buffer was pointing
+    bcf     INTCON,GIE          ; temporarily disable all interrupts to avoid interference
+    movwf   rundataCatchBufH    
+    movf    rundataXmtBufL,W
+    movwf   rundataCatchBufL
+    bsf     INTCON,GIE          ; re-enable all interrupts
     
-    addfsr  FSR0,.4                     ; point FSR0 at spot in xmt buffer after values above
+    movf    FSR0H,W             ; point xmt buffer pointer at where catch was pointing
+    movwf   rundataXmtBufH
+    movf    FSR0L,W
+    movwf   rundataXmtBufL
     
-; //WIP HSS// -- clock map is currently populated with 0s but should use real values in future
+; end switch rundata xmt and catch buffers
     
-    movlw   .48                         ; counter for number of bytes in clock map
-    movwf   pbScratch0
+    banksel scratch0
     
-    movlw   0x7F
+    movf    peakADAbsolute,W    ; store the peakADAbsolute so we can have our own value to work with 
+    movwf   scratch1            ; (handleADInterrupt: might change peakADAbsolute often)
     
-getRunData_clockMapLoop:
+    movlw   .52                 ; calculate checksum
+    movwf   scratch0
+    call    sumSeries           ; add all bytes in the rundata xmt buffer
+    addwf   scratch1,W          ; peakADAbsolute will be sent in the rundata packet, so include
+    comf    WREG,W              ; use two's complement to get checksum value
+    addlw   .1
+    movwf   scratch2            ; store checksum for future use
     
-    movwi   FSR0++                      ; load everything in clock map with 0s
-    
-    decfsz  pbScratch0,F                ; loop until entire clock map populated
-    goto    getRunData_clockMapLoop
-    
-    movlw   0x86                        ; put 134 into the 16 clock position
-    moviw   -.32[FSR0]
-    
-; //WIP HSS// end
-    
-    banksel scratch0                    ; number of data bytes in packet to be checksummed
+    movf    rundataXmtBufH,W    ; xmt the rundata buffer via I2C
+    movwf   FSR0H
+    movf    rundataXmtBufL,W
+    movwf   FSR0L
     movlw   .52
     movwf   scratch0
+getRunData_xmtLoop:
+    moviw   FSR0++
+    movwf   FSR1L
+    call    sendByteViaI2C
+    btfsc   commonFlags,BIT_RDY_STOP
+    goto    cleanUpI2CAndReturn ; bail out if stop condition received for some reason
+    decfsz  scratch0
+    goto    getRunData_xmtLoop  ; loop until all of rundata buffer is sent
     
-    call    calcAndStoreCheckSumForI2CXmtBuf
+    movf    scratch1,W          ; xmt the peakADAbsolute along with the rundata
+    movwf   FSR1L
+    call    sendByteViaI2C
+    btfsc   commonFlags,BIT_RDY_STOP
+    goto    cleanUpI2CAndReturn ; bail out if stop condition received for some reason
     
-    goto    sendI2CBuffer
+    movf    scratch2,W          ; xmt the checksum
+    movwf   FSR1L
+    call    sendByteViaI2C
+
+    goto    cleanUpI2CAndReturn ; clean up I2C and return because nothing left to xmt
 
 ; end getRunData
+;--------------------------------------------------------------------------------------------------
+    
+;--------------------------------------------------------------------------------------------------
+; resetRundataBuffer
+;
+; Resets a rundata buffer.
+;
+; ON ENTRY:
+;
+; FSR0 points at buffer start   
+;
+
+resetRundataBuffer:
+    
+    movlw   0x00
+    movwi   FSR0++              ; set max to anti-peak
+    movwi   FSR0++              ; clear maxPeakClk
+    movwi   FSR0++              ; clear maxPeakLoc
+    
+    movlw   0xFF                ; set min to anti-peak
+    movwi   FSR0++
+    movlw   0x00
+    movwi   FSR0++              ; clear minPeakClk
+    movwi   FSR0++              ; clear minPeakLoc
+    
+    movlw   MAP_BUF_LEN         ; set all of clock map buffer to 0 (max anti-peak)
+    movwf   pbScratch0
+    movlw   0x00
+getRunData_clockMapLoop:
+    movwi   FSR0++
+    decfsz  pbScratch0
+    goto    getRunData_clockMapLoop
+    
+    return
+    
+; end resetRundataBuffer
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -1729,12 +1734,12 @@ handleI2CCommand:
 
 handleI2CReceive:
 
-    call    clearSSP1IF                 ; clear the I2C interrupt flag
+    ;//DEBUG HSS//call    clearSSP1IF                 ; clear the I2C interrupt flag
     call    setCKP                      ; release the I2C clock line so master can send next byte
 
     call    waitForSSP1IFHighOrStop     ; wait for byte or stop condition to be received
 
-    btfss   STATUS,Z
+    btfsc   commonFlags,BIT_RDY_STOP
     goto    cleanUpI2CAndReturn         ; bail out when stop condition received
 
     call    readI2CByteAndPrepForNext   ; get the byte just received
@@ -1827,15 +1832,10 @@ handleI2CTransmit:
 
 transmitTwoByteValueToMaster:
     
-    banksel i2cXmtBuf                   ; set buffer pointer to transmit buffer start
+    banksel i2cXmtBuf                   ; load FSR0 with buffer pointer
     movlw   high i2cXmtBuf
-    movwf   i2cXmtBufPtrH
-    movlw   low i2cXmtBuf
-    movwf   i2cXmtBufPtrL
-
-    movf    i2cXmtBufPtrH, W            ; load FSR0 with buffer pointer
     movwf   FSR0H
-    movf    i2cXmtBufPtrL, W
+    movlw    low i2cXmtBuf
     movwf   FSR0L
 
     movf    masterCmd,W                 ; get last AD value if command says to
@@ -1843,12 +1843,23 @@ transmitTwoByteValueToMaster:
     btfsc   STATUS,Z
     call    getLastADValue
     
-    movlw   .2                          ; number of data bytes in packet
+    movlw   .2                          ; calculate and store checksum
     movwf   scratch0
-    
     call    calcAndStoreCheckSumForI2CXmtBuf
 
-    goto    sendI2CBuffer
+    banksel i2cXmtBuf                   ; reload FSR0 with buffer pointer
+    movlw   high i2cXmtBuf
+    movwf   FSR0H
+    movlw    low i2cXmtBuf
+    movwf   FSR0L
+xmtTwoByteValue_xmtLoop:
+    moviw   FSR0++
+    movwf   FSR1L
+    call    sendByteViaI2C
+    btfss   commonFlags,BIT_RDY_STOP    ; loop through unil stop condition received
+    goto    xmtTwoByteValue_xmtLoop
+
+    goto    cleanUpI2CAndReturn         ; made it to here, so stop condition received -- bail out
 
 ; end transmitTwoByteValueToMaster
 ;--------------------------------------------------------------------------------------------------
@@ -1887,6 +1898,9 @@ getLastADValue:
     movlw   0x12
     movwf   INDF0
 
+    ;movlw   0x34
+    ;movwi   1[FSR0]
+    
     movf    slaveI2CAddress,W
     movwi   1[FSR0]
     
@@ -1971,7 +1985,7 @@ rBFILoop1:
 
     call    waitForSSP1IFHighOrStop     ; wait for byte or stop condition to be received
 
-    btfss   STATUS,Z
+    btfsc   commonFlags,BIT_RDY_STOP
     goto    cleanUpI2CAndReturn         ; bail out when stop condition received
 
     call    readI2CByteAndPrepForNext   ; get the byte just received
@@ -2069,10 +2083,10 @@ wfsh1:
 ; Waits in a loop for SSP1IF bit in register PIR1 to go high or P (stop) bit in SSP1STAT to go
 ; high.
 ;
-; On exit:
+; ON EXIT:
 ;
-; If SSP1IF went high, W will be 0 and Z flag set.
-; If P (stop condition) went high, W will be 1 and Z flag cleared.
+; commonFlags,BIT_RDY_STOP = 0  if ready to send next byte
+; commonFlags,BIT_RDY_STOP = 1  if stop condition received
 ;
 
 waitForSSP1IFHighOrStop:
@@ -2081,29 +2095,28 @@ waitForSSP1IFHighOrStop:
     goto  wfshosByteReceived    ; simulated by the IDE
     endif
 
-
 wfshos1:
 
     banksel PIR1
-    btfsc   PIR1, SSP1IF        ; check interrupt flag
+    btfsc   PIR1,SSP1IF         ; check interrupt flag
     goto    wfshosByteReceived  ; return if flag set
 
     banksel SSP1STAT
-    btfsc   SSP1STAT, P         ; check stop condition received flag
+    btfsc   SSP1STAT,P          ; check stop condition received flag
     goto    wfshosStopReceived  ; return if flag set
 
     goto    wfshos1
 
 wfshosByteReceived:
 
-    clrw                        ; signal that byte received
-    addlw   0x00                ; (must use addlw to set Z bit)
+    ; set send next byte flag and return
+    bcf     commonFlags,BIT_RDY_STOP
     return
 
 wfshosStopReceived:
 
-    clrw                        ; signal that stop condition received
-    addlw   0x01                ; (must use addlw to clear Z bit)
+    ; set stop flag and return
+    bsf     commonFlags,BIT_RDY_STOP
     return
 
 ; end of waitForSSP1IFHighOrStop
@@ -2234,7 +2247,7 @@ INT_ERROR_LP1:		        		; NO, do error recovery
 	;GOTO INT_ERROR_LP1      		; This is the trap if you enter the ISR
                                		; but there were no expected interrupts
 
-	retfie                  ; return and enable interrupts
+	retfie                          ; return and enable interrupts
 
 ; end of handleInterrupt
 ;--------------------------------------------------------------------------------------------------
@@ -2278,12 +2291,12 @@ hiocExit:
 ;--------------------------------------------------------------------------------------------------
 ; handleADInterrupt
 ;
-; This function is called when a sample is ready in the A/D converter.
+; This function is called when a sample is ready in the A/D converter. The new sample is stored 
+; and used to process and handle data pertaining to the rundata buffer and the snapshot buffer.
 ;
-; The sample is stored in samplePreBuffer along with the clock position at the time the sample
-; was stored. The next conversion is started.
+; See notes at top of file "Rundata Buffering" and "Snapshot Buffering" //WIP HSS// -- add notes to top of file
 ;
-; On Entry:
+; ON ENTRY:
 ;
 ; bank register should be set to PIR1
 ;
@@ -2303,198 +2316,192 @@ handleADInterrupt:
 
     bsf     ADCON0,ADGO         ; start next A/D conversion
     
-    banksel lastADSample        ; store A/D sample
-    movwf   lastADSample
+    movwf   lastADSample        ; store A/D sample
     
-    banksel TMR0                ; get current clock position
+    banksel TMR0                ; store current clock position
     movf    TMR0,W
+    movwf   lastSampleClk
     
-    banksel peakFlags           ; select bank with A/D related values
+    movf    rundataCatchBufH,W  ; point FSR0 at rundata catch buffer
+    movwf   FSR0H
+    movf    rundataCatchBufL,W
+    movwf   FSR0L
     
-    movwf   lastSampleClk       ; store current clock position
+    addfsr  FSR0,.6             ; point FSR0 at beginning of clock map
     
-    movf    lastADSample,W      ; check to see if new max
-    subwf   maxPeak,W
-    btfsc   STATUS,C            ; if clear then last A/D sample > last stored maxPeak
-    goto    checkMinADInterrupt
+    moviw   -.6[FSR0]           ; check to see if new max
+    subwf   lastADSample,W
+    btfss   STATUS,C            ; if set then it is new max (lastADSample > maxPeak)
+    goto    handleADInterrupt_checkMin
     
-    movf    lastADSample,W      ; store last A/D sample as new max peak
-    movwf   maxPeak
-    movf    lastSampleClk,W     ; store last clock sample as new max clock
-    movwf   maxPeakClk
+    movf    lastADSample,W      ; store last A/D sample as new max peak (maxPeak)     
+    movwi   -.6[FSR0]
+    movf    lastSampleClk,W     ; store last clock sample as new max clock (maxPeakClk)
+    movwi   -.5[FSR0]
+    movlw   0x00                ; store 0s as maxPeakLoc //WIP HSS// -- should actually do stuff
+    movwi    -.4[FSR0]
     
-checkMinADInterrupt:
+handleADInterrupt_checkMin:
     
-    movf    lastADSample,W      ; check to see if new min
-    subwf   minPeak,W
-    btfss   STATUS,C            ; if set then last A/D sample <= last stored minPeak
-    goto    exitADInterrupt
-
-    movf    lastADSample,W      ; store last A/D sample as new min peak
-    movwf   minPeak
-    movf    lastSampleClk,W     ; store last clock sample as new min clock
-    movwf   minPeakClk
+    moviw   -.3[FSR0]           ; check to see if new min
+    subwf   lastADSample,W
+    btfsc   STATUS,C            ; if clear then it is new min (lastADSample < minPeak)
+    goto    handleADInterrupt_doClockMap
     
-exitADInterrupt:
+    movf    lastADSample,W      ; store last A/D sample as new min peak (minPeak)     
+    movwi   -.3[FSR0]
+    movf    lastSampleClk,W     ; store last clock sample as new min clock (minPeakClk)
+    movwi   -.2[FSR0]
+    movlw   0x00                ; store 0s as minPeakLoc //WIP HSS// -- should actually do stuff
+    movwi    -.1[FSR0]
+    
+; end handleADInterrupt_checkMin:
+    
+handleADInterrupt_doClockMap:
+   
+    movf    lastSampleClk,W     ; point FSR0 at proper clock position
+    addwf   FSR0,F              ; NOTE: For this to work, clock map buffer has to be in one bank
+    
+    ; Convert lastADSample to absolute value
+    movf    lastADSample,W
+    xorlw   0x80                ; flip top bit of AD sample to make it a signed byte
+    btfss   WREG,.0             ; if top bit is set, take two's compliment to get absolute value
+    goto    handleADInterrupt_checkClockMap
+    
+    comf    WREG,W              ; value was negative; take two's compliment to get absolute value
+    addlw   .1
+    ; end Convert lastADSample to absolute value
+    
+handleADInterrupt_checkClockMap:
+    
+    movwf   lastADAbsolute      ; store the absolute value
+    
+    subwf   INDF0,W             ; see if lastADAbsolute is new peak for current clock position
+    movf    lastADAbsolute,W
+    btfss   STATUS,C            ; if clear then it is new peak for current clock position
+    movwf   INDF0               ; lastADAbsolute > last peak for clock position, so replace old peak
+    
+; end handleADInterrupt_checkClockMap:
+    
+; begin stuff with the snapshot buffer
+    
+    subwf   peakADAbsolute,W    ; see if lastADAbsolute is new overall peak
+    btfsc   STATUS,C            ; if clear then new peak was found (lastADAbsolute > peakADAbsolute)
+    goto    adInterrupt_putLastAbsInSnapBuf
+    
+    movf    lastADAbsolute,W    ; store new peak and reset counter
+    movwf   peakADAbsolute
+    movlw   SNAPSHOT_BUF_LEN/2
+    movwf   snapBufCnt
+    goto    adInterrupt_putLastAbsInSnapBuf   ; skip over counter check
+    
+handleADInterrupt_checkCounter:
+    
+    movf    snapBufCnt,F
+    btfsc   STATUS,Z
+    goto    adInterrupt_putLastAbsInSnapBuf   ; skip over counter dec if it is already zero
+    
+    decfsz  snapBufCnt,F        ; decrement and check counter
+    goto    adInterrupt_putLastAbsInSnapBuf   ; skip over buffer switch if not zero yet
+    
+    ; made it to here, which means the buffers need to be switched
+    movf    snapPeakBufH,W      ; temporarily store snapPeakBufH
+    movwf   FSR0H
+    movf    snapCatchBufH,W     ; replace snapPeakBufH with snapCatchBufH
+    movwf   snapPeakBufH
+    movf    FSR0H,W             ; replace snapCatchBufH with snapPeakBufH
+    movwf   snapCatchBufH
+    
+    movf    snapPeakBufL,W      ; temporarily store snapPeakBufL
+    movwf   FSR0L
+    movf    snapCatchBufL,W     ; replace snapPeakBufL with snapCatchBufL
+    movwf   snapPeakBufL
+    movf    FSR0L,W             ; replace snapCatchBufL with snapPeakBufL
+    movwf   snapCatchBufL
+    ; done switching buffers
+    
+adInterrupt_putLastAbsInSnapBuf:
+    
+    movf    snapCatchBufH,W
+    movwf   FSR0H
+    movf    snapCatchBufL,W
+    movwf   FSR0L
+    
+    movf    lastADAbsolute,W    ; store last A/D absolute value in the snapshot buffer
+    movwf   INDF0
+    
+    incf    snapCatchBufL       ; increment for next time
+    bcf     snapCatchBufL,.7    ; clear bit 7 so 128-byte cicular buffer automatically rolls around
     
     retfie                      ; return and enable interrupts
-
+    
 ; end of handleADInterrupt
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; reallyBigDelay
+; setupRundataAndSnapshotVars
 ;
-; Delays for a second or two.
+; Sets up variables and pointers releated to rundata and snapshot buffering.
 ;
-; To adjust the delay, load scratch6 with any value and enter at rbd1.
-; In that case, use "banksel scratch6" before entering.
-;
-
-reallyBigDelay:
-
-    banksel scratch6
-
-    movlw   .50
-    movwf   scratch6
-
-rbd1:
-
-    movlw   .255
-    movwf   scratch7
-
-rbd2:
-
-    movlw   .255
-    movwf   scratch8
-
-rbd3:
-
-    decfsz  scratch8,F
-    goto    rbd3
-
-    decfsz  scratch7,F
-    goto    rbd2
-
-    decfsz  scratch6,F
-    goto    rbd1
-
-    return
-
-; end of reallyBigDelay
-;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
-; setupADVars
-;
-; Sets up variables and pointers releated to A/D sampling and storage.
+; See notes at top of file "Rundata Buffering" and "Snapshot Buffering".
 ;
 
-setupADVars:
+setupRundataAndSnapshotVars:
 
     banksel peakFlags
 
-    clrf    peakFlags
-
-    movlw   0x00                ;preset to min value so any max will exceed
-    movwf   maxPeak
-    clrf    maxPeakClk
-    clrf    maxPeakLoc
-    movlw   0xff                ;preset to max value so any min will exceed
-    movwf   minPeak
-    clrf    minPeakClk
-    clrf    minPeakLoc
-    clrf    maxABSPeak
+    clrf    peakFlags           ; clear peak flags
     
-    clrf    lastADSample        ;clear sample values
+    clrf    lastADSample        ; clear important values
+    clrf    lastADAbsolute
     clrf    lastSampleClk
     clrf    lastSampleLoc
+    clrf    peakADAbsolute
+    clrf    snapBufCnt
 
-    clrf    peakBufFinishCnt
-    clrf    peakBufLastLoc
+    ; reset buffers and assign pointers
 
-    ; assign all pointers to a buffer
-
-    movlw   high mapBuf1
-    movwf   mapCatchBufH
-    movlw   mapBuf1
-    movwf   mapCatchBufL
-
-    movlw   high mapBuf2
-    movwf   mapXmtBufH
-    movlw   mapBuf2
-    movwf   mapXmtBufL
-
-    movlw   high sampleBuf1
-    movwf   catchBufH
-    movlw   sampleBuf1
-    movwf   catchBufL
-
-    movlw   high sampleBuf2
-    movwf   peakBufH
-    movlw   sampleBuf2
-    movwf   peakBufL
-
-    movlw   high sampleBuf3
-    movwf   xmtBufH
-    movlw   sampleBuf3
-    movwf   xmtBufL
-
-    ; setup A/D pre-buffer variables
-
-    banksel numPreSamples
-    clrf    numPreSamples
-    clrf    maxNumPreSamples
-
-    movlw   high samplePreBuf
-    movwf   inPreBufH
-    movwf   outPreBufH
-    movlw   samplePreBuf
-    movwf   inPreBufL
-    movwf   outPreBufL
-
-    ; zero each buffer (makes debugging easier)
-
-    movlw   high samplePreBuf
+    movlw   RUNDATA_BUF1_ADDRESS_H
+    movwf   rundataCatchBufH
     movwf   FSR0H
-    movlw   samplePreBuf
+    movlw   RUNDATA_BUF1_ADDRESS_L
+    movwf   rundataCatchBufL
     movwf   FSR0L
-    movlw   SAMPLE_PREBUF_LEN
+    call    resetRundataBuffer
+
+    movlw   RUNDATA_BUF2_ADDRESS_H
+    movwf   rundataXmtBufH
+    movwf   FSR0H
+    movlw   RUNDATA_BUF2_ADDRESS_L
+    movwf   rundataXmtBufL
+    movwf   FSR0L
+    call    resetRundataBuffer
+    
+    movlw   SNAP_BUF1_LINEAR_LOC_H
+    movwf   snapCatchBufH
+    movwf   FSR0H
+    movlw   SNAP_BUF1_LINEAR_LOC_L
+    movwf   snapCatchBufL
+    movwf   FSR0L
+    movlw   SNAPSHOT_BUF_LEN
     call    clearMemBlock
-
-    movlw   high mapBuf1
+    
+    movlw   SNAP_BUF2_LINEAR_LOC_H
+    movwf   snapPeakBufH
     movwf   FSR0H
-    movlw   mapBuf1
+    movlw   SNAP_BUF2_LINEAR_LOC_L
+    movwf   snapPeakBufL
     movwf   FSR0L
-    movlw   MAP_BUF_LEN
+    movlw   SNAPSHOT_BUF_LEN
     call    clearMemBlock
-
-    movlw   high mapBuf2
+    
+    movlw   SNAP_BUF3_LINEAR_LOC_H
+    movwf   snapXmtBufH
     movwf   FSR0H
-    movlw   mapBuf2
+    movlw   SNAP_BUF3_LINEAR_LOC_L
+    movwf   snapXmtBufL
     movwf   FSR0L
-    movlw   MAP_BUF_LEN
-    call    clearMemBlock
-
-    movlw   high sampleBuf1
-    movwf   FSR0H
-    movlw   sampleBuf1
-    movwf   FSR0L
-    movlw   SAMPLE_BUF_LEN
-    call    clearMemBlock
-
-    movlw   high sampleBuf2
-    movwf   FSR0H
-    movlw   sampleBuf2
-    movwf   FSR0L
-    movlw   SAMPLE_BUF_LEN
-    call    clearMemBlock
-
-    movlw   high sampleBuf3
-    movwf   FSR0H
-    movlw   sampleBuf3
-    movwf   FSR0L
-    movlw   SAMPLE_BUF_LEN
+    movlw   SNAPSHOT_BUF_LEN
     call    clearMemBlock
 
     ; For boards which do not have a clock position sync input, each channel is assigned to a
@@ -2515,7 +2522,7 @@ setupADVars:
 
     return
 
-; end of setupADVars
+; end of setupRundataAndSnapshotVars
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -2546,171 +2553,5 @@ cMBLoop:
 
 ; end of clearMemBlock
 ;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
-; preservePeakData
-;
-; Copies the peak sample values and related variables to snapshot variables. The catch and peak
-; buffer pointers are swapped so that the buffer data associated with the peak is also preserved.
-;
-; The map buffer is not preserved as it is not associated with the peak values.
-;
-; On Entry:
-;
-; bank register should be set to peakFlags
-;
-; On Exit:
-;
-; bank register points at peakFlags
-; WREG is unknown
-;
-
-preservePeakData:
-
-    movf    maxPeak,W
-    movwf   maxPeakSnap
-
-    movf    maxPeakClk,W
-    movwf   maxPeakClkSnap
-
-    movf    maxPeakLoc,W
-    movwf   maxPeakLocSnap
-
-    movf    minPeak,W
-    movwf   minPeakSnap
-
-    movf    minPeakClk,W
-    movwf   minPeakClkSnap
-
-    movf    minPeakLoc,W
-    movwf   minPeakLocSnap
-
-    call    swapCatchPeakPtrs
-
-    return
-
-; end of preservePeakData
-;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
-; swapCatchPeakPtrs
-;
-; Swaps the value in catchBufH:L pointer with that in peakBufH:L pointer.
-;
-; On Entry:
-;
-; bank register should be set to peakFlags
-;
-; On Exit:
-;
-; bank register points at peakFlags
-; WREG is unknown
-;
-
-swapCatchPeakPtrs:
-
-    movf    catchBufH,W
-    movwf   pbScratch0
-
-    movf    peakBufH,W
-    movwf   catchBufH
-
-    movf    pbScratch0,W
-    movwf   peakBufH
-
-    movf    catchBufL,W
-    movwf   pbScratch0
-
-    movf    peakBufL,W
-    movwf   catchBufL
-
-    movf    pbScratch0,W
-    movwf   peakBufL
-
-    return
-
-; end of swapCatchPeakPtrs
-;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
-; swapXmtPeakPtrs
-;
-; Swaps the value in xmtBufH:L pointer with that in peakBufH:L pointer.
-;
-; On Entry:
-;
-; bank register should be set to peakFlags
-;
-; On Exit:
-;
-; bank register points at peakFlags
-; WREG is unknown
-;
-
-swapXmtPeakPtrs:
-
-    movf    xmtBufH,W
-    movwf   pbScratch0
-
-    movf    peakBufH,W
-    movwf   xmtBufH
-
-    movf    pbScratch0,W
-    movwf   peakBufH
-
-    movf    xmtBufL,W
-    movwf   pbScratch0
-
-    movf    peakBufL,W
-    movwf   xmtBufL
-
-    movf    pbScratch0,W
-    movwf   peakBufL
-
-    return
-
-; end of swapXmtPeakPtrs
-;--------------------------------------------------------------------------------------------------
-
-;--------------------------------------------------------------------------------------------------
-; swapMapXmtCatchPtrs
-;
-; Swaps the value in mapXmtBufH:L pointer with that in mapCatchBufH:L pointer.
-;
-; On Entry:
-;
-; bank register should be set to peakFlags
-;
-; On Exit:
-;
-; bank register points at peakFlags
-; WREG is unknown
-;
-
-swapMapXmtCatchPtrs:
-
-    movf    mapXmtBufH,W
-    movwf   pbScratch0
-
-    movf    mapCatchBufH,W
-    movwf   mapXmtBufH
-
-    movf    pbScratch0,W
-    movwf   mapCatchBufH
-
-    movf    mapXmtBufL,W
-    movwf   pbScratch0
-
-    movf    mapCatchBufL,W
-    movwf   mapXmtBufL
-
-    movf    pbScratch0,W
-    movwf   mapCatchBufL
-
-    return
-
-; end of swapMapXmtCatchPtrs
-;--------------------------------------------------------------------------------------------------
-
 
     END
