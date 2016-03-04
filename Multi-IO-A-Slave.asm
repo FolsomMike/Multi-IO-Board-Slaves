@@ -1355,7 +1355,7 @@ getAllStatus:
     movlw   0x03                        ; unused -- for future use
     movwi   FSR0++
 
-    movlw   .11                         ; number of data bytes in packet
+    movlw   .10                         ; number of data bytes in packet
     movwf   scratch0
 
     call    calcAndStoreCheckSumForI2CXmtBuf
