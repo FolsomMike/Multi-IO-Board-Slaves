@@ -872,7 +872,7 @@ setup:
 
     call    initializeOutputs
 
-    call    parseSlaveIC2Address
+    call    parseSlaveI2CAddress
 
     call    setupI2CSlave7BitMode ; prepare the I2C serial bus for use
 
@@ -915,7 +915,7 @@ setup:
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
-; parseSlaveIC2Address
+; parseSlaveI2CAddress
 ;
 ; Determines the PIC's I2C slave address by reading the address input bits which identify this
 ; PIC's address . Each Slave PIC's three address inputs are tied uniquely high/low.
@@ -924,7 +924,7 @@ setup:
 ; The address for the I2C module is NOT set...that is done when that module is set up.
 ;
 
-parseSlaveIC2Address:
+parseSlaveI2CAddress:
 
     banksel slaveI2CAddress
     clrf    slaveI2CAddress
@@ -942,7 +942,7 @@ parseSlaveIC2Address:
 
     return
 
-; end of parseSlaveIC2Address
+; end of parseSlaveI2CAddress
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
