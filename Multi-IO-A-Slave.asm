@@ -592,11 +592,13 @@ SNAP_BUF1_LINEAR_LOC_L  EQU low SNAP_BUF1_LINEAR_ADDR
 
  cblock 0x2a0               ; starting address
 
-    maxPeak1                ; overall A/D max
+    maxPeak1H               ; overall A/D max MSB
+    maxPeak1L               ; overall A/D max LSB
     maxPeakClk1             ; clock position of max A/D
     maxPeakLoc1             ; linear location of max A/D
     
-    minPeak1                ; overall A/D min
+    minPeak1H               ; overall A/D min MSB
+    minPeak1L               ; overall A/D min LSB
     minPeakClk1             ; clock position of min A/D
     minPeakLoc1             ; linear location of min A/D
 
@@ -604,8 +606,8 @@ SNAP_BUF1_LINEAR_LOC_L  EQU low SNAP_BUF1_LINEAR_ADDR
 
  endc
  
-RUNDATA_BUF1_ADDRESS_H  EQU high maxPeak1
-RUNDATA_BUF1_ADDRESS_L  EQU low maxPeak1
+RUNDATA_BUF1_ADDRESS_H  EQU high maxPeak1H
+RUNDATA_BUF1_ADDRESS_L  EQU low maxPeak1H
   
 ; end Bank 05
 ;--------------------------------------------------------------------------
@@ -671,11 +673,13 @@ SNAP_BUF2_LINEAR_LOC_L  EQU low SNAP_BUF2_LINEAR_ADDR
 
  cblock 0x420               ; starting address
  
-    maxPeak2                ; overall A/D max
+    maxPeak2H               ; overall A/D max MSB
+    maxPeak2L               ; overall A/D max LSB
     maxPeakClk2             ; clock position of max A/D
     maxPeakLoc2             ; linear location of max A/D
     
-    minPeak2                ; overall A/D min
+    minPeak2H               ; overall A/D min MSB
+    minPeak2L               ; overall A/D min LSB
     minPeakClk2             ; clock position of min A/D
     minPeakLoc2             ; linear location of min A/D
 
@@ -683,8 +687,8 @@ SNAP_BUF2_LINEAR_LOC_L  EQU low SNAP_BUF2_LINEAR_ADDR
 
  endc
  
-RUNDATA_BUF2_ADDRESS_H  EQU high maxPeak2
-RUNDATA_BUF2_ADDRESS_L  EQU low maxPeak2
+RUNDATA_BUF2_ADDRESS_H  EQU high maxPeak2H
+RUNDATA_BUF2_ADDRESS_L  EQU low maxPeak2H
 
 ; end Bank 08
 ;--------------------------------------------------------------------------
@@ -1518,13 +1522,18 @@ sendByteViaI2C:
 ; Transmits all of the run data it to the Master PIC via I2C. This function should be called when
 ; the PIC_GET_RUN_DATA_CMD is received from the Master PIC.
 ;
-; Run data currently consists of:
-;   02 bytes    overall min
-;   02 bytes    overall max
+; Rundata currently consists of:
+;   02 bytes    max peak
+;   01 bytes    max peak clock position
+;   01 bytes    max peak linear location
+;   02 bytes    min peak
+;   01 bytes    min peak clock position
+;   01 bytes    min peak linear location
 ;   48 bytes    clock map
 ;   01 bytes    absolute peak
+;   01 bytes    check sum
 ;   ---
-;   53 bytes    total
+;   58 bytes    total
 ;
 ; This function is done in the main code and not in interrupt code. It is expected that the A/D
 ; converter interrupt will occur one or more times during transmission of the peak data.
@@ -1535,9 +1544,9 @@ getRunData:
     banksel peakFlags
     
     ; reset xmt buffer since it was transmitted last time
-    movlw   rundataXmtBufH
+    movf    rundataXmtBufH,W
     movwf   FSR0H
-    movlw   rundataXmtBufL
+    movf    rundataXmtBufL,W
     movwf   FSR0L
     call    resetRundataBuffer
     
@@ -1569,7 +1578,7 @@ getRunData:
     movf    peakADAbsolute,W    ; store the peakADAbsolute so we can have our own value to work with 
     movwf   scratch1            ; (handleADInterrupt: might change peakADAbsolute often)
     
-    movlw   .52                 ; calculate checksum
+    movlw   .56                 ; calculate checksum
     movwf   scratch0
     call    sumSeries           ; add all bytes in the rundata xmt buffer
     addwf   scratch1,W          ; peakADAbsolute will be sent in the rundata packet, so include
@@ -1577,11 +1586,11 @@ getRunData:
     addlw   .1
     movwf   scratch2            ; store checksum for future use
     
-    movf    rundataXmtBufH,W    ; xmt the rundata buffer via I2C
-    movwf   FSR0H
-    movf    rundataXmtBufL,W
-    movwf   FSR0L
-    movlw   .52
+    ; xmt rundata buffer via I2C
+    
+    addfsr  FSR0,-.32           ; move pointer to first byte in packet (-56)
+    addfsr  FSR0,-.24           ; addfsr instruction can only handle -32 to 31
+    movlw   .56
     movwf   scratch0
 getRunData_xmtLoop:
     moviw   FSR0++
@@ -1589,8 +1598,11 @@ getRunData_xmtLoop:
     call    sendByteViaI2C
     btfsc   commonFlags,BIT_RDY_STOP
     goto    cleanUpI2CAndReturn ; bail out if stop condition received for some reason
+    banksel scratch0
     decfsz  scratch0
     goto    getRunData_xmtLoop  ; loop until all of rundata buffer is sent
+    
+    ; end xmt rundata buffer via I2C
     
     movf    scratch1,W          ; xmt the peakADAbsolute along with the rundata
     movwf   FSR1L
@@ -1598,6 +1610,7 @@ getRunData_xmtLoop:
     btfsc   commonFlags,BIT_RDY_STOP
     goto    cleanUpI2CAndReturn ; bail out if stop condition received for some reason
     
+    banksel scratch2
     movf    scratch2,W          ; xmt the checksum
     movwf   FSR1L
     call    sendByteViaI2C
@@ -1618,12 +1631,14 @@ getRunData_xmtLoop:
 ;
 
 resetRundataBuffer:
-    
+
     movlw   0x00
+    movwi   FSR0++              ; put 0s in MSB of max
     movwi   FSR0++              ; set max to anti-peak
     movwi   FSR0++              ; clear maxPeakClk
     movwi   FSR0++              ; clear maxPeakLoc
     
+    movwi   FSR0++              ; put 0s in MSB of min
     movlw   0xFF                ; set min to anti-peak
     movwi   FSR0++
     movlw   0x00
@@ -1705,7 +1720,7 @@ handleI2CCommand:
     banksel SSP1BUF
     movf    SSP1BUF,W           ; get incoming address byte; clears BF flag
 
-    call    clearSSP1IF
+    call    clearSSP1IF         ; clear the I2C interrupt flag
 
 ; jump to handle receive or transmit request
 ; if bit 0 of the address byte is 0, the master is sending and this PIC is receiving
@@ -1729,9 +1744,8 @@ handleI2CCommand:
 ;
 
 handleI2CReceive:
-
-    ;//DEBUG HSS//call    clearSSP1IF                 ; clear the I2C interrupt flag
-    call    setCKP                      ; release the I2C clock line so master can send next byte
+    
+    call    setCKP              ; release the I2C clock line so master can send next byte
 
     call    waitForSSP1IFHighOrStop     ; wait for byte or stop condition to be received
 
