@@ -265,6 +265,7 @@ PIC_GET_RUN_DATA_CMD            EQU .4
 PIC_ENABLE_POT_CMD              EQU .5
 PIC_DISABLE_POT_CMD             EQU .6
 PIC_GET_LAST_AD_VALUE_CMD       EQU .7
+PIC_SET_ONOFF_CMD               EQU .8
 
 I2C_RCV_BUF_LEN      EQU .5
 I2C_XMT_BUF_LEN      EQU .20
@@ -410,7 +411,8 @@ COM_ERROR           EQU 0
 AD_OVERRUN          EQU 1
     
 ; bits in commonFlags
-BIT_RDY_STOP            EQU 0
+BIT_CHAN_ONOFF          EQU 0
+BIT_RDY_STOP            EQU 1
 
 ; values for A/D register ADCON0 to select channel and enable A/D
 
@@ -779,8 +781,8 @@ SNAP_BUF3_LINEAR_LOC_L  EQU low SNAP_BUF3_LINEAR_ADDR
 
  cblock	0x070
   
-    commonFlags             ; bit 0: 0 = ready to send next byte, 1 = stop condition (BIT_RDY_STOP)
-                            ; bit 1: 0 =
+    commonFlags             ; bit 0: 0 = channel is off, 1 = channel is on (BIT_CHAN_ONOFF)
+                            ; bit 1: 0 = ready to send next byte, 1 = stop condition (BIT_RDY_STOP)
                             ; bit 2: 0 =
                             ; bit 3: 0 =
                             ; bit 4: 0 =
@@ -905,7 +907,7 @@ setup:
 ; enable the interrupts
 
     banksel PIE1            ; enable A/D interrupts
-    bsf     PIE1, ADIE
+    ;//DEBUG HSS//bsf     PIE1, ADIE
 
     bsf     INTCON,PEIE     ; enable peripheral interrupts (Timers, A/D converter, etc.)
 
@@ -1548,6 +1550,8 @@ getRunData:
     movwf   FSR0H
     movf    rundataXmtBufL,W
     movwf   FSR0L
+    btfss   commonFlags,BIT_CHAN_ONOFF
+    goto    skipBufferResetAndSwap          ; skip buffer reset and swap if channel disabled
     call    resetRundataBuffer
     
 ; end reset xmt buffer
@@ -1572,6 +1576,8 @@ getRunData:
     movwf   rundataXmtBufL
     
 ; end switch rundata xmt and catch buffers
+    
+skipBufferResetAndSwap:
     
     banksel scratch0
     
@@ -1777,6 +1783,11 @@ handleI2CReceive:
     sublw   PIC_DISABLE_POT_CMD
     btfsc   STATUS,Z
     goto    disableDigitalPot
+    
+    movf    masterCmd,W
+    sublw   PIC_SET_ONOFF_CMD
+    btfsc   STATUS,Z
+    goto    handleHostChannelOnOffCmd
 
     return
 
@@ -1830,6 +1841,91 @@ handleI2CTransmit:
     return
 
 ; end handleI2CTransmit
+;--------------------------------------------------------------------------------------------------
+    
+;--------------------------------------------------------------------------------------------------
+; handleHostChannelOnOffCmd
+;
+; Turns the channel for this Slave PIC on or off depending on the next byte sent by the Master PIC.
+; 
+; If the next byte is 0, the channel is turned off; if it is 1, then the channel is turned on.
+;
+; The channel is turned off by disabling the A/D Converter interrupts
+;
+; The channel is turned on by enabling the A/D Converter interrupts and starting a conversion.
+;
+
+handleHostChannelOnOffCmd:
+    
+    movlw   .1                          ; store 1 bytes from I2C
+    call    receiveBytesFromI2C
+    
+    banksel scratch3
+    movf    scratch3,W                  ; move on/off byte into W to set Z flag
+    
+    btfss   STATUS,Z
+    goto    hHostChOnOffCmd_EnableChan  ; if next byte was 1 then enable channel
+    
+    ; Disable channel
+    
+    bcf     commonFlags,BIT_CHAN_ONOFF
+    
+    banksel PIE1                        ; disable A/D interrupts
+    bcf     PIE1, ADIE
+    
+    ; set xmt buffer to 0s
+    banksel peakFlags
+    
+    movf    rundataXmtBufH,W
+    movwf   FSR0H
+    movf    rundataXmtBufL,W
+    movwf   FSR0L
+    
+    movlw   .127                ; set max to .127 (actually zero with host offset)
+    movwi   FSR0++
+    movlw   0x00
+    movwi   FSR0++              ; clear maxPeakClk
+    movwi   FSR0++              ; clear maxPeakLoc
+    
+    movlw   .127                ; set min to .127 (actually zero with host offset)
+    movwi   FSR0++
+    movlw   0x00
+    movwi   FSR0++              ; clear minPeakClk
+    movwi   FSR0++              ; clear minPeakLoc
+    
+    movlw   MAP_BUF_LEN         ; set all of clock map buffer to 0
+    call    clearMemBlock
+    ; end set xmt buffer to 0s
+    
+    ; reset catch buffer for when channel is enabled again
+    movlw   rundataCatchBufH
+    movwf   FSR0H
+    movlw   rundataCatchBufL
+    movwf   FSR0L
+    call    resetRundataBuffer
+    ; end reset catch buffer
+    
+    return
+    
+    ; end Disable channel
+    
+hHostChOnOffCmd_EnableChan:
+    
+    ; Enable channel
+    
+    bsf     commonFlags,BIT_CHAN_ONOFF
+    
+    banksel ADCON0                      ; start A/D conversions
+    bsf     ADCON0,ADGO
+    
+    banksel PIE1                        ; enable A/D interrupts and start converting
+    bsf     PIE1,ADIE
+    
+    return
+    
+    ; end Enable channel
+
+; end handleHostChannelOnOffCmd
 ;--------------------------------------------------------------------------------------------------
     
 ;--------------------------------------------------------------------------------------------------
@@ -1954,11 +2050,8 @@ doReset:
 ; receiveBytesFromI2C
 ;
 ; Receives a specified number of bytes from the I2C bus.
-; Normally, this number is equal to the number of bytes read unless the master sends too few or
-; too many.
-;
-; Acking: Slave hardware will generate an ACK response if the AHEN and DHEN bits of the SSPCON3
-; register are clear.
+; Normally, this number is equal to the number of bytes read unless the master
+; sends too few or too many.
 ;
 ; On entry:
 ;  W register: the number of bytes to be stored
@@ -1987,8 +2080,9 @@ receiveBytesFromI2C:
     clrf    scratch1                ; track number of bytes recorded
     clrf    scratch2                ; clear control flags
 
-    clrf    FSR0H
-    movlw   scratch3                ; point to first byte of receive buffer
+    movlw   high scratch3           ; point to first byte of receive buffer
+    movwf   FSR0H
+    movlw   low scratch3
     movwf   FSR0L
 
 rBFILoop1:
