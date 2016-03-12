@@ -266,6 +266,7 @@ PIC_ENABLE_POT_CMD              EQU .5
 PIC_DISABLE_POT_CMD             EQU .6
 PIC_GET_LAST_AD_VALUE_CMD       EQU .7
 PIC_SET_ONOFF_CMD               EQU .8
+PIC_GET_SNAPSHOT_CMD            EQU .9
 
 I2C_RCV_BUF_LEN      EQU .5
 I2C_XMT_BUF_LEN      EQU .20
@@ -1373,7 +1374,6 @@ getAllStatus:
     movwf   FSR0L
 getAllStatus_xmtLoop:
     moviw   FSR0++
-    movwf   FSR1L
     call    sendByteViaI2C
     btfss   commonFlags,BIT_RDY_STOP    ; loop through unil stop condition received
     goto    getAllStatus_xmtLoop
@@ -1464,7 +1464,7 @@ sumSeries:
 
     clrf    WREG
 
-sumSLoop:                       ; sum the series
+sumSLoop:                 ; sum the series
 
     addwf   INDF0,W
     addfsr  INDF0,1
@@ -1496,8 +1496,7 @@ sendByteViaI2C:
 
     call    clearWCOL                   ; make sure error flag is reset to allow sending
 
-    movf    FSR1L,W                     ; send byte
-    movwf   SSP1BUF
+    movwf   SSP1BUF                     ; send byte
 
     call    clearSSP1IF                 ; clear the I2C interrupt flag
     call    setCKP                      ; release the I2C clock line so master can send next byte
@@ -1545,37 +1544,57 @@ getRunData:
     
     banksel peakFlags
     
-    ; reset xmt buffer since it was transmitted last time
-    movf    rundataXmtBufH,W
+    movf    rundataXmtBufH,W    ; point FSR0 at rundata xmt buffer
     movwf   FSR0H
     movf    rundataXmtBufL,W
     movwf   FSR0L
+    
+    movf    snapXmtBufH,W       ; point FSR1 at snapshot xmt buffer
+    movwf   FSR1H
+    movf    snapXmtBufL,W
+    movwf   FSR1L
+    
     btfss   commonFlags,BIT_CHAN_ONOFF
     goto    skipBufferResetAndSwap          ; skip buffer reset and swap if channel disabled
-    call    resetRundataBuffer
+    call    resetRundataBuffer  ; reset xmt buffer since it was transmitted last time
+    call    resetSnapshotBuffer ; reset snapshot buffer since it was transmitted last time
     
 ; end reset xmt buffer
     
-; switch rundata xmt and catch buffers
+; switch rundata xmt and catch pointers and snapshot xmt and peak pointers
     
-    movf    rundataCatchBufH,W  ; temporarily store the catch buffer pointer
+    movf    rundataCatchBufH,W  ; temporarily store rundata catch buffer pointer
     movwf   FSR0H
     movf    rundataCatchBufL,W
     movwf   FSR0L
     
-    movf    rundataXmtBufH,W    ; point catch buffer pointer at where the xmt buffer was pointing
+    movf    snapPeakBufH,W  ; temporarily store snapshot peak buffer pointer
+    movwf   FSR1H
+    movf    snapPeakBufL,W
+    movwf   FSR1L
+    
+    movf    rundataXmtBufH,W
     bcf     INTCON,GIE          ; temporarily disable all interrupts to avoid interference
     movwf   rundataCatchBufH    
     movf    rundataXmtBufL,W
     movwf   rundataCatchBufL
+    movf    snapXmtBufH,W
+    movwf   snapPeakBufH    
+    movf    snapXmtBufL,W
+    movwf   snapPeakBufL
     bsf     INTCON,GIE          ; re-enable all interrupts
     
-    movf    FSR0H,W             ; point xmt buffer pointer at where catch was pointing
+    movf    FSR0H,W             ; point rundata xmt buffer pointer at where catch was pointing
     movwf   rundataXmtBufH
     movf    FSR0L,W
     movwf   rundataXmtBufL
     
-; end switch rundata xmt and catch buffers
+    movf    FSR1H,W             ; point snapshot xmt buffer pointer at where peak was pointing
+    movwf   snapXmtBufH
+    movf    FSR1L,W
+    movwf   snapXmtBufL
+    
+; end switch rundata xmt and catch pointers and snapshot xmt and peak pointers
     
 skipBufferResetAndSwap:
     
@@ -1584,9 +1603,9 @@ skipBufferResetAndSwap:
     movf    peakADAbsolute,W    ; store the peakADAbsolute so we can have our own value to work with 
     movwf   scratch1            ; (handleADInterrupt: might change peakADAbsolute often)
     
-    movlw   .56                 ; calculate checksum
+    movlw   .56                 ; sum bytes in rundata xmt buffer
     movwf   scratch0
-    call    sumSeries           ; add all bytes in the rundata xmt buffer
+    call    sumSeries
     addwf   scratch1,W          ; peakADAbsolute will be sent in the rundata packet, so include
     comf    WREG,W              ; use two's complement to get checksum value
     addlw   .1
@@ -1594,13 +1613,12 @@ skipBufferResetAndSwap:
     
     ; xmt rundata buffer via I2C
     
-    addfsr  FSR0,-.32           ; move pointer to first byte in packet (-56)
+    addfsr  FSR0,-.32           ; move FSR0 to first byte in rundata (-56)
     addfsr  FSR0,-.24           ; addfsr instruction can only handle -32 to 31
     movlw   .56
     movwf   scratch0
 getRunData_xmtLoop:
     moviw   FSR0++
-    movwf   FSR1L
     call    sendByteViaI2C
     btfsc   commonFlags,BIT_RDY_STOP
     goto    cleanUpI2CAndReturn ; bail out if stop condition received for some reason
@@ -1611,19 +1629,79 @@ getRunData_xmtLoop:
     ; end xmt rundata buffer via I2C
     
     movf    scratch1,W          ; xmt the peakADAbsolute along with the rundata
-    movwf   FSR1L
     call    sendByteViaI2C
     btfsc   commonFlags,BIT_RDY_STOP
     goto    cleanUpI2CAndReturn ; bail out if stop condition received for some reason
     
     banksel scratch2
     movf    scratch2,W          ; xmt the checksum
-    movwf   FSR1L
     call    sendByteViaI2C
 
     goto    cleanUpI2CAndReturn ; clean up I2C and return because nothing left to xmt
 
 ; end getRunData
+;--------------------------------------------------------------------------------------------------
+    
+;--------------------------------------------------------------------------------------------------
+; xmtSnapshotBuffer
+;
+; Transmits the snapshot buffer to the Master PIC via I2C. This function should be called when the 
+; PIC_GET_SNAPSHOT_CMD is received from the Master PIC.
+;
+; Rundata currently consists of:
+;   128 bytes   snapshot buffer
+;   001 bytes   check sum
+;   ---
+;   129 bytes    total
+;
+; This function is done in the main code and not in interrupt code. It is expected that the A/D
+; converter interrupt will occur one or more times during transmission of the data.
+;
+
+xmtSnapshotBuffer:
+    
+    banksel peakFlags
+    
+    movf    snapXmtBufH,W       ; point FSR0 at snapshot xmt buffer
+    movwf   FSR0H
+    movf    snapXmtBufL,W
+    movwf   FSR0L
+    
+    banksel scratch0
+    
+    movlw   .128                ; sum bytes in snapshot xmt buffer
+    movwf   scratch0
+    call    sumSeries
+    comf    WREG,W              ; use two's complement to get checksum value
+    addlw   .1
+    movwf   scratch2            ; store checksum for future use
+    
+    ; xmt snapshot buffer via I2C
+    
+    addfsr  FSR0,-.32           ; move FSR0 to first byte in rundata (-128)
+    addfsr  FSR0,-.32
+    addfsr  FSR0,-.32
+    addfsr  FSR0,-.32           ; addfsr instruction can only handle -32 to 31
+    movlw   .128
+    movwf   scratch0
+xmtSnapshotBuffer_xmtLoop:
+    moviw   FSR0++
+    call    sendByteViaI2C
+    btfsc   commonFlags,BIT_RDY_STOP
+    goto    cleanUpI2CAndReturn ; bail out if stop condition received for some reason
+    banksel scratch0
+    decfsz  scratch0
+    goto    getRunData_xmtLoop  ; loop until all of rundata buffer is sent
+    
+    ; end xmt snapshot buffer via I2C
+    
+    banksel scratch2
+    movf    scratch2,W          ; xmt the checksum
+    call    sendByteViaI2C
+
+    goto    cleanUpI2CAndReturn ; clean up I2C and return because nothing left to xmt
+
+; end xmtSnapshotBuffer
 ;--------------------------------------------------------------------------------------------------
     
 ;--------------------------------------------------------------------------------------------------
@@ -1662,6 +1740,37 @@ getRunData_clockMapLoop:
     return
     
 ; end resetRundataBuffer
+;--------------------------------------------------------------------------------------------------
+    
+;--------------------------------------------------------------------------------------------------
+; resetSnapshotBuffer
+;
+; Sets all bytes up to 255 in a memory block to zero. This is used instead of clearMemBlock so that
+; FSR1 can be used.
+;
+; ON ENTRY:
+;
+; W contains number of bytes to zero
+; FSR1 points to start of buffer
+;
+
+resetSnapshotBuffer:
+
+    banksel scratch0                        ; store number of bytes in block
+    movlw   SNAPSHOT_BUF_LEN
+    movwf   scratch0
+
+    movlw   0x00
+
+rSBLoop:
+
+    movwi   FSR1++
+    decfsz  scratch0,F
+    goto    cMBLoop
+
+    return
+
+; end of resetSnapshotBuffer
 ;--------------------------------------------------------------------------------------------------
 
 ;--------------------------------------------------------------------------------------------------
@@ -1834,6 +1943,11 @@ handleI2CTransmit:
     goto    getRunData
     
     movf    masterCmd,W
+    sublw   PIC_GET_SNAPSHOT_CMD
+    btfsc   STATUS,Z
+    goto    xmtSnapshotBuffer
+    
+    movf    masterCmd,W
     sublw   PIC_GET_LAST_AD_VALUE_CMD
     btfsc   STATUS,Z
     goto    transmitTwoByteValueToMaster
@@ -1873,7 +1987,7 @@ handleHostChannelOnOffCmd:
     banksel PIE1                        ; disable A/D interrupts
     bcf     PIE1, ADIE
     
-    ; set xmt buffer to 0s
+    ; set rundata xmt buffer to 0s
     banksel peakFlags
     
     movf    rundataXmtBufH,W
@@ -1895,15 +2009,37 @@ handleHostChannelOnOffCmd:
     
     movlw   MAP_BUF_LEN         ; set all of clock map buffer to 0
     call    clearMemBlock
-    ; end set xmt buffer to 0s
+    ; end set rundata xmt buffer to 0s
     
-    ; reset catch buffer for when channel is enabled again
+    ; reset rundata catch buffer for when channel is enabled again
     movlw   rundataCatchBufH
     movwf   FSR0H
     movlw   rundataCatchBufL
     movwf   FSR0L
     call    resetRundataBuffer
-    ; end reset catch buffer
+    ; end reset rundata catch buffer
+    
+    ; reset snapshot xmt, peak, and catch buffers
+    banksel peakFlags
+    
+    movlw   snapXmtBufH
+    movwf   FSR1H
+    movlw   snapXmtBufL
+    movwf   FSR1L
+    call    resetSnapshotBuffer
+    
+    movlw   snapPeakBufH
+    movwf   FSR1H
+    movlw   snapPeakBufL
+    movwf   FSR1L
+    call    resetSnapshotBuffer
+    
+    movlw   snapCatchBufH
+    movwf   FSR1H
+    movlw   snapCatchBufL
+    movwf   FSR1L
+    call    resetSnapshotBuffer
+    ; end reset snapshot xmt, peak, and catch buffers
     
     return
     
@@ -1960,7 +2096,6 @@ transmitTwoByteValueToMaster:
     movwf   FSR0L
 xmtTwoByteValue_xmtLoop:
     moviw   FSR0++
-    movwf   FSR1L
     call    sendByteViaI2C
     btfss   commonFlags,BIT_RDY_STOP    ; loop through unil stop condition received
     goto    xmtTwoByteValue_xmtLoop
@@ -2583,12 +2718,12 @@ setupRundataAndSnapshotVars:
     
     movlw   SNAP_BUF1_LINEAR_LOC_H
     movwf   snapCatchBufH
-    movwf   FSR0H
+    movwf   FSR1H
     movlw   SNAP_BUF1_LINEAR_LOC_L
     movwf   snapCatchBufL
-    movwf   FSR0L
+    movwf   FSR1L
     movlw   SNAPSHOT_BUF_LEN
-    call    clearMemBlock
+    call    resetSnapshotBuffer
     
     movlw   SNAP_BUF2_LINEAR_LOC_H
     movwf   snapPeakBufH
@@ -2597,7 +2732,7 @@ setupRundataAndSnapshotVars:
     movwf   snapPeakBufL
     movwf   FSR0L
     movlw   SNAPSHOT_BUF_LEN
-    call    clearMemBlock
+    call    resetSnapshotBuffer
     
     movlw   SNAP_BUF3_LINEAR_LOC_H
     movwf   snapXmtBufH
@@ -2606,7 +2741,7 @@ setupRundataAndSnapshotVars:
     movwf   snapXmtBufL
     movwf   FSR0L
     movlw   SNAPSHOT_BUF_LEN
-    call    clearMemBlock
+    call    resetSnapshotBuffer
 
     ; For boards which do not have a clock position sync input, each channel is assigned to a
     ; different clock position (such as for Transverse system where shoes do not spin but are
