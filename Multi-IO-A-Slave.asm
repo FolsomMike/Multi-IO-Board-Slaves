@@ -528,7 +528,7 @@ AD_CHANNEL_CODE    EQU     b'00100101'
 ;--------------------------------------------------------------------------
 ; Bank 02 - 80 bytes of free space
 
- cblock 0x180               ; starting address
+ cblock 0x120               ; starting address
 
  endc
   
