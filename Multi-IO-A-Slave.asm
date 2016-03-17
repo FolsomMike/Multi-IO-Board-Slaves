@@ -864,6 +864,7 @@ setup:
     clrf    flags
     clrf    statusFlags
     clrf    comErrorCnt
+    clrf    commonFlags         ; clear common flags to make sure channel is off
 
     call    setupClock          ; set system clock source and frequency
 
@@ -906,9 +907,6 @@ setup:
 ;end of hardware configuration
 	
 ; enable the interrupts
-
-    banksel PIE1            ; enable A/D interrupts
-    ;//DEBUG HSS//bsf     PIE1, ADIE
 
     bsf     INTCON,PEIE     ; enable peripheral interrupts (Timers, A/D converter, etc.)
 
@@ -1290,8 +1288,6 @@ setupADConverter:
     movlw   AD_CHANNEL_CODE
     movwf   ADCON0
 
-    bsf     ADCON0,ADGO                         ;start first A/D conversion
-
     return
 
 ; end of setupADConverter
@@ -1563,6 +1559,8 @@ getRunData:
     
 ; switch rundata xmt and catch pointers and snapshot xmt and peak pointers
     
+    banksel peakFlags
+    
     movf    rundataCatchBufH,W  ; temporarily store rundata catch buffer pointer
     movwf   FSR0H
     movf    rundataCatchBufL,W
@@ -1583,6 +1581,8 @@ getRunData:
     movf    snapXmtBufL,W
     movwf   snapPeakBufL
     bsf     INTCON,GIE          ; re-enable all interrupts
+    
+    banksel peakFlags
     
     movf    FSR0H,W             ; point rundata xmt buffer pointer at where catch was pointing
     movwf   rundataXmtBufH
@@ -1691,7 +1691,7 @@ xmtSnapshotBuffer_xmtLoop:
     goto    cleanUpI2CAndReturn ; bail out if stop condition received for some reason
     banksel scratch0
     decfsz  scratch0
-    goto    getRunData_xmtLoop  ; loop until all of rundata buffer is sent
+    goto    xmtSnapshotBuffer_xmtLoop  ; loop until all of rundata buffer is sent
     
     ; end xmt snapshot buffer via I2C
     
@@ -1729,6 +1729,7 @@ resetRundataBuffer:
     movwi   FSR0++              ; clear minPeakClk
     movwi   FSR0++              ; clear minPeakLoc
     
+    banksel pbScratch0
     movlw   MAP_BUF_LEN         ; set all of clock map buffer to 0 (max anti-peak)
     movwf   pbScratch0
     movlw   0x00
@@ -1766,7 +1767,7 @@ rSBLoop:
 
     movwi   FSR1++
     decfsz  scratch0,F
-    goto    cMBLoop
+    goto    rSBLoop
 
     return
 
@@ -2734,6 +2735,7 @@ setupRundataAndSnapshotVars:
     movlw   SNAPSHOT_BUF_LEN
     call    resetSnapshotBuffer
     
+    banksel peakFlags
     movlw   SNAP_BUF3_LINEAR_LOC_H
     movwf   snapXmtBufH
     movwf   FSR0H
