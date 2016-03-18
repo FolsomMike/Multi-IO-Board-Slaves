@@ -1996,13 +1996,17 @@ handleHostChannelOnOffCmd:
     movf    rundataXmtBufL,W
     movwf   FSR0L
     
-    movlw   .127                ; set max to .127 (actually zero with host offset)
+    movlw   0x00                ; set max to .127 (actually zero with host offset)
+    movwi   FSR0++
+    movlw   .127
     movwi   FSR0++
     movlw   0x00
     movwi   FSR0++              ; clear maxPeakClk
     movwi   FSR0++              ; clear maxPeakLoc
     
-    movlw   .127                ; set min to .127 (actually zero with host offset)
+    movlw   0x00                ; set min to .127 (actually zero with host offset)
+    movwi   FSR0++
+    movlw   .127
     movwi   FSR0++
     movlw   0x00
     movwi   FSR0++              ; clear minPeakClk
@@ -2013,9 +2017,9 @@ handleHostChannelOnOffCmd:
     ; end set rundata xmt buffer to 0s
     
     ; reset rundata catch buffer for when channel is enabled again
-    movlw   rundataCatchBufH
+    movf    rundataCatchBufH,W
     movwf   FSR0H
-    movlw   rundataCatchBufL
+    movf    rundataCatchBufL,W
     movwf   FSR0L
     call    resetRundataBuffer
     ; end reset rundata catch buffer
@@ -2023,21 +2027,21 @@ handleHostChannelOnOffCmd:
     ; reset snapshot xmt, peak, and catch buffers
     banksel peakFlags
     
-    movlw   snapXmtBufH
+    movf    snapXmtBufH,W
     movwf   FSR1H
-    movlw   snapXmtBufL
+    movf    snapXmtBufL,W
     movwf   FSR1L
     call    resetSnapshotBuffer
     
-    movlw   snapPeakBufH
+    movf    snapPeakBufH,W
     movwf   FSR1H
-    movlw   snapPeakBufL
+    movf    snapPeakBufL,W
     movwf   FSR1L
     call    resetSnapshotBuffer
     
-    movlw   snapCatchBufH
+    movf    snapCatchBufH,W
     movwf   FSR1H
-    movlw   snapCatchBufL
+    movf    snapCatchBufL,W
     movwf   FSR1L
     call    resetSnapshotBuffer
     ; end reset snapshot xmt, peak, and catch buffers
