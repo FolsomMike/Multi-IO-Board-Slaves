@@ -1705,6 +1705,123 @@ xmtSnapshotBuffer_xmtLoop:
 ;--------------------------------------------------------------------------------------------------
     
 ;--------------------------------------------------------------------------------------------------
+; turnChannelOff
+;
+; Turns the channel off for this Slave PIC.
+;
+; When channel is turned off:
+;   flag set indicating channel is off
+;   A/D Converter interrupts disabled
+;   some important values are cleared
+;   rundata and snapshot xmt buffers populated with with 0s
+;   rundata catch, snapshot catch and  snapshot peak buffers are reset/prepped for when the channel 
+;       is turned on
+;
+
+turnChannelOff:
+    
+    bcf     commonFlags,BIT_CHAN_ONOFF
+    
+    banksel PIE1                        ; disable A/D interrupts
+    bcf     PIE1, ADIE
+    
+    banksel peakFlags
+    
+    clrf    lastADSample                ; clear important values -- should remain cleared until
+    clrf    lastADAbsolute              ; channel is turned on again
+    clrf    lastSampleClk
+    clrf    lastSampleLoc
+    clrf    peakADAbsolute
+    clrf    snapBufCnt
+    
+    ; set rundata xmt buffer to 0s
+    movf    rundataXmtBufH,W
+    movwf   FSR0H
+    movf    rundataXmtBufL,W
+    movwf   FSR0L
+    
+    movlw   0x00                ; set max to .127 (actually zero with host offset)
+    movwi   FSR0++
+    movlw   .127
+    movwi   FSR0++
+    movlw   0x00
+    movwi   FSR0++              ; clear maxPeakClk
+    movwi   FSR0++              ; clear maxPeakLoc
+    
+    movlw   0x00                ; set min to .127 (actually zero with host offset)
+    movwi   FSR0++
+    movlw   .127
+    movwi   FSR0++
+    movlw   0x00
+    movwi   FSR0++              ; clear minPeakClk
+    movwi   FSR0++              ; clear minPeakLoc
+    
+    movlw   MAP_BUF_LEN         ; set all of clock map buffer to 0
+    call    clearMemBlock
+    ; end set rundata xmt buffer to 0s
+    
+    ; reset rundata catch buffer for when channel is enabled again
+    movf    rundataCatchBufH,W
+    movwf   FSR0H
+    movf    rundataCatchBufL,W
+    movwf   FSR0L
+    call    resetRundataBuffer
+    ; end reset rundata catch buffer
+    
+    ; reset snapshot xmt, peak, and catch buffers
+    banksel peakFlags
+    
+    movf    snapXmtBufH,W
+    movwf   FSR1H
+    movf    snapXmtBufL,W
+    movwf   FSR1L
+    call    resetSnapshotBuffer
+    
+    movf    snapPeakBufH,W
+    movwf   FSR1H
+    movf    snapPeakBufL,W
+    movwf   FSR1L
+    call    resetSnapshotBuffer
+    
+    movf    snapCatchBufH,W
+    movwf   FSR1H
+    movf    snapCatchBufL,W
+    movwf   FSR1L
+    call    resetSnapshotBuffer
+    ; end reset snapshot xmt, peak, and catch buffers
+    
+    return
+
+; end turnChannelOff
+;--------------------------------------------------------------------------------------------------
+    
+;--------------------------------------------------------------------------------------------------
+; turnChannelOn
+;
+; Turns the channel on for this Slave PIC.
+;
+; When channel is turned on:
+;   flag set indicating channel is on
+;   A/D Converter interrupts are enabled
+;   an A/D conversion is started
+;
+
+turnChannelOn:
+    
+    bsf     commonFlags,BIT_CHAN_ONOFF
+    
+    banksel ADCON0                      ; start A/D conversions
+    bsf     ADCON0,ADGO
+    
+    banksel PIE1                        ; enable A/D interrupts and start converting
+    bsf     PIE1,ADIE
+    
+    return
+
+; end turnChannelOn
+;--------------------------------------------------------------------------------------------------
+    
+;--------------------------------------------------------------------------------------------------
 ; resetRundataBuffer
 ;
 ; Resets a rundata buffer.
@@ -1965,10 +2082,6 @@ handleI2CTransmit:
 ; 
 ; If the next byte is 0, the channel is turned off; if it is 1, then the channel is turned on.
 ;
-; The channel is turned off by disabling the A/D Converter interrupts
-;
-; The channel is turned on by enabling the A/D Converter interrupts and starting a conversion.
-;
 
 handleHostChannelOnOffCmd:
     
@@ -1979,92 +2092,8 @@ handleHostChannelOnOffCmd:
     movf    scratch3,W                  ; move on/off byte into W to set Z flag
     
     btfss   STATUS,Z
-    goto    hHostChOnOffCmd_EnableChan  ; if next byte was 1 then enable channel
-    
-    ; Disable channel
-    
-    bcf     commonFlags,BIT_CHAN_ONOFF
-    
-    banksel PIE1                        ; disable A/D interrupts
-    bcf     PIE1, ADIE
-    
-    ; set rundata xmt buffer to 0s
-    banksel peakFlags
-    
-    movf    rundataXmtBufH,W
-    movwf   FSR0H
-    movf    rundataXmtBufL,W
-    movwf   FSR0L
-    
-    movlw   0x00                ; set max to .127 (actually zero with host offset)
-    movwi   FSR0++
-    movlw   .127
-    movwi   FSR0++
-    movlw   0x00
-    movwi   FSR0++              ; clear maxPeakClk
-    movwi   FSR0++              ; clear maxPeakLoc
-    
-    movlw   0x00                ; set min to .127 (actually zero with host offset)
-    movwi   FSR0++
-    movlw   .127
-    movwi   FSR0++
-    movlw   0x00
-    movwi   FSR0++              ; clear minPeakClk
-    movwi   FSR0++              ; clear minPeakLoc
-    
-    movlw   MAP_BUF_LEN         ; set all of clock map buffer to 0
-    call    clearMemBlock
-    ; end set rundata xmt buffer to 0s
-    
-    ; reset rundata catch buffer for when channel is enabled again
-    movf    rundataCatchBufH,W
-    movwf   FSR0H
-    movf    rundataCatchBufL,W
-    movwf   FSR0L
-    call    resetRundataBuffer
-    ; end reset rundata catch buffer
-    
-    ; reset snapshot xmt, peak, and catch buffers
-    banksel peakFlags
-    
-    movf    snapXmtBufH,W
-    movwf   FSR1H
-    movf    snapXmtBufL,W
-    movwf   FSR1L
-    call    resetSnapshotBuffer
-    
-    movf    snapPeakBufH,W
-    movwf   FSR1H
-    movf    snapPeakBufL,W
-    movwf   FSR1L
-    call    resetSnapshotBuffer
-    
-    movf    snapCatchBufH,W
-    movwf   FSR1H
-    movf    snapCatchBufL,W
-    movwf   FSR1L
-    call    resetSnapshotBuffer
-    ; end reset snapshot xmt, peak, and catch buffers
-    
-    return
-    
-    ; end Disable channel
-    
-hHostChOnOffCmd_EnableChan:
-    
-    ; Enable channel
-    
-    bsf     commonFlags,BIT_CHAN_ONOFF
-    
-    banksel ADCON0                      ; start A/D conversions
-    bsf     ADCON0,ADGO
-    
-    banksel PIE1                        ; enable A/D interrupts and start converting
-    bsf     PIE1,ADIE
-    
-    return
-    
-    ; end Enable channel
+    goto    turnChannelOn               ; if byte received was 1 then turn channel on
+    goto    turnChannelOff              ; if byte received was 0 then turn channel on
 
 ; end handleHostChannelOnOffCmd
 ;--------------------------------------------------------------------------------------------------
@@ -2571,19 +2600,19 @@ handleADInterrupt:
     movf    rundataCatchBufL,W
     movwf   FSR0L
     
-    addfsr  FSR0,.6             ; point FSR0 at beginning of clock map
+    addfsr  FSR0,.8             ; point FSR0 at beginning of clock map
     
-    moviw   -.6[FSR0]           ; check to see if new max
+    moviw   -.7[FSR0]           ; check to see if new max
     subwf   lastADSample,W
     btfss   STATUS,C            ; if set then it is new max (lastADSample > maxPeak)
     goto    handleADInterrupt_checkMin
     
     movf    lastADSample,W      ; store last A/D sample as new max peak (maxPeak)     
-    movwi   -.6[FSR0]
+    movwi   -.7[FSR0]
     movf    lastSampleClk,W     ; store last clock sample as new max clock (maxPeakClk)
-    movwi   -.5[FSR0]
+    movwi   -.6[FSR0]
     movlw   0x00                ; store 0s as maxPeakLoc //WIP HSS// -- should actually do stuff
-    movwi    -.4[FSR0]
+    movwi   -.5[FSR0]
     
 handleADInterrupt_checkMin:
     
@@ -2631,22 +2660,22 @@ handleADInterrupt_checkClockMap:
     
     subwf   peakADAbsolute,W    ; see if lastADAbsolute is new overall peak
     btfsc   STATUS,C            ; if clear then new peak was found (lastADAbsolute > peakADAbsolute)
-    goto    adInterrupt_putLastAbsInSnapBuf
+    goto    adInterrupt_putLastSmplInSnapBuf
     
     movf    lastADAbsolute,W    ; store new peak and reset counter
     movwf   peakADAbsolute
     movlw   SNAPSHOT_BUF_LEN/2
     movwf   snapBufCnt
-    goto    adInterrupt_putLastAbsInSnapBuf   ; skip over counter check
+    goto    adInterrupt_putLastSmplInSnapBuf    ; skip over counter check
     
 handleADInterrupt_checkCounter:
     
     movf    snapBufCnt,F
     btfsc   STATUS,Z
-    goto    adInterrupt_putLastAbsInSnapBuf   ; skip over counter dec if it is already zero
+    goto    adInterrupt_putLastSmplInSnapBuf    ; skip over counter dec if it is already zero
     
     decfsz  snapBufCnt,F        ; decrement and check counter
-    goto    adInterrupt_putLastAbsInSnapBuf   ; skip over buffer switch if not zero yet
+    goto    adInterrupt_putLastSmplInSnapBuf    ; skip over buffer switch if not zero yet
     
     ; made it to here, which means the buffers need to be switched
     movf    snapPeakBufH,W      ; temporarily store snapPeakBufH
@@ -2664,14 +2693,14 @@ handleADInterrupt_checkCounter:
     movwf   snapCatchBufL
     ; done switching buffers
     
-adInterrupt_putLastAbsInSnapBuf:
+adInterrupt_putLastSmplInSnapBuf:
     
     movf    snapCatchBufH,W
     movwf   FSR0H
     movf    snapCatchBufL,W
     movwf   FSR0L
     
-    movf    lastADAbsolute,W    ; store last A/D absolute value in the snapshot buffer
+    movf    lastADSample,W      ; store last A/D sample in the snapshot buffer
     movwf   INDF0
     
     incf    snapCatchBufL       ; increment for next time
@@ -2695,59 +2724,35 @@ setupRundataAndSnapshotVars:
     banksel peakFlags
 
     clrf    peakFlags           ; clear peak flags
-    
-    clrf    lastADSample        ; clear important values
-    clrf    lastADAbsolute
-    clrf    lastSampleClk
-    clrf    lastSampleLoc
-    clrf    peakADAbsolute
-    clrf    snapBufCnt
 
-    ; reset buffers and assign pointers
-
+    ; assign pointers
     movlw   RUNDATA_BUF1_ADDRESS_H
     movwf   rundataCatchBufH
-    movwf   FSR0H
     movlw   RUNDATA_BUF1_ADDRESS_L
     movwf   rundataCatchBufL
-    movwf   FSR0L
-    call    resetRundataBuffer
 
     movlw   RUNDATA_BUF2_ADDRESS_H
     movwf   rundataXmtBufH
-    movwf   FSR0H
     movlw   RUNDATA_BUF2_ADDRESS_L
     movwf   rundataXmtBufL
-    movwf   FSR0L
-    call    resetRundataBuffer
     
     movlw   SNAP_BUF1_LINEAR_LOC_H
     movwf   snapCatchBufH
-    movwf   FSR1H
     movlw   SNAP_BUF1_LINEAR_LOC_L
     movwf   snapCatchBufL
-    movwf   FSR1L
-    movlw   SNAPSHOT_BUF_LEN
-    call    resetSnapshotBuffer
     
     movlw   SNAP_BUF2_LINEAR_LOC_H
     movwf   snapPeakBufH
-    movwf   FSR0H
     movlw   SNAP_BUF2_LINEAR_LOC_L
     movwf   snapPeakBufL
-    movwf   FSR0L
-    movlw   SNAPSHOT_BUF_LEN
-    call    resetSnapshotBuffer
     
-    banksel peakFlags
     movlw   SNAP_BUF3_LINEAR_LOC_H
     movwf   snapXmtBufH
-    movwf   FSR0H
     movlw   SNAP_BUF3_LINEAR_LOC_L
     movwf   snapXmtBufL
-    movwf   FSR0L
-    movlw   SNAPSHOT_BUF_LEN
-    call    resetSnapshotBuffer
+    
+    ; turn the channel off
+    call    turnChannelOff
 
     ; For boards which do not have a clock position sync input, each channel is assigned to a
     ; different clock position (such as for Transverse system where shoes do not spin but are
