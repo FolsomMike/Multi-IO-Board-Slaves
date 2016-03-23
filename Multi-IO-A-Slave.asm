@@ -1883,6 +1883,7 @@ resetSnapshotBuffer:
 rSBLoop:
 
     movwi   FSR1++
+    bcf     FSR1,.7             ; clear bit 7 so 128-byte cicular buffer automatically rolls around
     decfsz  scratch0,F
     goto    rSBLoop
 
