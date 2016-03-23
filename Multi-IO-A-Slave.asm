@@ -2639,7 +2639,7 @@ handleADInterrupt_doClockMap:
     ; Convert lastADSample to absolute value
     movf    lastADSample,W
     xorlw   0x80                ; flip top bit of AD sample to make it a signed byte
-    btfss   WREG,.0             ; if top bit is set, take two's compliment to get absolute value
+    btfss   WREG,.7             ; if top bit is set, take two's compliment to get absolute value
     goto    handleADInterrupt_checkClockMap
     
     comf    WREG,W              ; value was negative; take two's compliment to get absolute value
