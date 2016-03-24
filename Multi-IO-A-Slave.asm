@@ -79,12 +79,16 @@
 ; Three 128-byte circular buffers and three pointers are used for snapshot buffering. None of the 
 ; three buffers are ever copied; instead, the pointers are swapped.
 ;
-; Operation:
+; Capturing:
 ;
 ;   When a new peak is found, the A/D interrupt (handleAdIntterupt) will continue to put values into 
 ;   the catch buffer until it has accumulated 64 samples after the peak. 
 ;
-;   Once all 64 samples are captured, the catch buffer and peak buffer pointers are swapped.
+;   Once all 64 samples are captured, the catch buffer and peak buffer pointers are swapped. So that
+;   the samples begin at the top of each buffer, the LSB of the catch buffer pointer (snapCatchBufL)
+;   is cleared instead of becoming equal to the LSB of the peak buffer pointer (snapPeakBufL). 
+;   snapPeakBufL is still set to snapCatchBufL to keep track of where the peak buffer ends; in other
+;   words, snapPeakBufL is set equal to the most recent A/D value put into the peak buffer.
 ;
 ;   After swapping, the program continues looking for a higher peak than the one stored in the peak
 ;   buffer, starting the process over again.
@@ -93,20 +97,24 @@
 ;
 ;   The snapshot is not transmitted with the run data, but the absolute peak is. The Master PIC
 ;   compares the abosolute peaks retreived from the slaves and then requests the snapshot from the
-;   slave who returned the greatest peak. To ensure that the peak doesn't change between the time 
-;   the Master requested the rundata and snapshot, the snapshot xmt and snapshot catch buffer 
-;   pointers are swapped when the rundata is requested.
+;   slave who returned the greatest peak.
+;
+;   To ensure that the peak buffer doesn't change between the time the Master requested the rundata 
+;   and snapshot, the snapshot xmt and snapshot catch buffer pointers are swapped when the rundata 
+;   is requested. During this swap, snapXmtBufL is set to snapPeakBufL so that we know where the
+;   end of the buffer is, but snapPeakBufL is not set to snapXmtBufL because the capturing process 
+;   does not need the LSB of the peak buffer pointer to swap(see "Capturing" above).
+;
+;   When the snapshot buffer is transmitted, the transmission begins at snapXmtBufH:snapXmtBufL + 1.
+;   One is added because snapXmtBufL is actually pointing at the end of the buffer. Assuming that we
+;   had a successful capture, completely filling the snapshot buffer, the +1 should put us at the
+;   start of the buffer.
 ;
 ; Ideally, the peak buffer should contain 63 samples before the peak and 64 after, but the buffer 
 ; swapping can cause there to be less samples before, as few as zero.
 ;   
 ; The three buffers are rotated amongst the three pointers allowing data to be preserved without 
-; ever having to copy it. The pointers are not reset to the start of the buffer on swapping, so data
-; collection starts again with whatever the last location was.
-;
-; The peak and catch buffer pointers are in Common RAM to minimize the number of bankselects 
-; required in the A/D interrupt. Since transmitting the snapshot is not as time sensitive, the
-; xmt buffer pointer is not stored in Common RAM.
+; ever having to copy it.
 ; 
 ; On device reset, the pointers are set up as follows:
 ;
@@ -1530,6 +1538,8 @@ sendByteViaI2C:
 ; This function is done in the main code and not in interrupt code. It is expected that the A/D
 ; converter interrupt will occur one or more times during transmission of the peak data.
 ;
+; See notes at top of file "Rundata Buffering" and "Snapshot Buffering"
+;
 
 getRunData:
     
@@ -1573,8 +1583,6 @@ getRunData:
     movwf   rundataCatchBufL
     movf    snapXmtBufH,W
     movwf   snapPeakBufH    
-    movf    snapXmtBufL,W
-    movwf   snapPeakBufL
     bsf     INTCON,GIE          ; re-enable all interrupts
     
     banksel peakFlags
@@ -1653,6 +1661,8 @@ getRunData_xmtLoop:
 ; This function is done in the main code and not in interrupt code. It is expected that the A/D
 ; converter interrupt will occur one or more times during transmission of the data.
 ;
+; See notes at top of file "Snapshot Buffering"
+;
 
 xmtSnapshotBuffer:
     
@@ -1677,8 +1687,8 @@ xmtSnapshotBuffer:
     addwf   scratch1,W          ; include address of most recent A/D value put in snap peak buffer
     
 xmtSnapBuf_SumLoop:             ; sum bytes in snapshot xmt buffer
+    addfsr  INDF0,1             ; add first so it points at start of buffer
     addwf   INDF0,W
-    addfsr  INDF0,1
     bcf     FSR0,.7             ; clear bit 7 so 128-byte cicular buffer automatically rolls around
     decfsz  scratch0,F
     goto    xmtSnapBuf_SumLoop
@@ -2765,12 +2775,9 @@ handleADInterrupt_checkCounter:
     movf    FSR0H,W             ; replace snapCatchBufH with snapPeakBufH
     movwf   snapCatchBufH
     
-    movf    snapPeakBufL,W      ; temporarily store snapPeakBufL
-    movwf   FSR0L
     movf    snapCatchBufL,W     ; replace snapPeakBufL with snapCatchBufL
     movwf   snapPeakBufL
-    movf    FSR0L,W             ; replace snapCatchBufL with snapPeakBufL
-    movwf   snapCatchBufL
+    clrf    snapCatchBufL       ; point snapCatchBufL at start of buffer
     ; done switching buffers
     
 adInterrupt_putLastSmplInSnapBuf:
