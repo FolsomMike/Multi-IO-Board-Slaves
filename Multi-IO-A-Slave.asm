@@ -1252,8 +1252,8 @@ setupADConverter:
 
     ; set ADCON1 to configure the A/D converter
     ; bit 7 = 0 : left justify the result in ADRESH:ADRESL
-    ; bit 6 = 0 : bits 6-4 : A/D Conversion Clock Select bits
-    ; bit 5 = 1 :    010 -> FOSC/32 -> 1.0 us
+    ; bit 6 = 1 : bits 6-4 : A/D Conversion Clock Select bits
+    ; bit 5 = 1 :    110 -> FOSC/64 -> 1.33 us
     ; bit 4 = 0 : 
     ; bit 3 = 0 : unused
     ; bit 2 = 0 : unused
