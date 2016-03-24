@@ -1662,17 +1662,32 @@ xmtSnapshotBuffer:
     movwf   FSR0H
     movf    snapXmtBufL,W
     movwf   FSR0L
-    movwf   scratch1            ; address of most recent A/D value put in snap peak buffer
     
     banksel scratch0
     
-    movlw   .128                ; sum bytes in snapshot xmt buffer
+    movwf   scratch1            ; store address of most recent A/D value put in snap peak buffer
+    
+    ; calculate checksum
+    
+    movlw   SNAPSHOT_BUF_LEN    ; set up counter for xmtSnapBuf_SumLoop
     movwf   scratch0
-    call    sumSeries
+    
+    clrf    WREG
+    
     addwf   scratch1,W          ; include address of most recent A/D value put in snap peak buffer
+    
+xmtSnapBuf_SumLoop:             ; sum bytes in snapshot xmt buffer
+    addwf   INDF0,W
+    addfsr  INDF0,1
+    bcf     FSR0,.7             ; clear bit 7 so 128-byte cicular buffer automatically rolls around
+    decfsz  scratch0,F
+    goto    xmtSnapBuf_SumLoop
+    
     comf    WREG,W              ; use two's complement to get checksum value
     addlw   .1
     movwf   scratch2            ; store checksum for future use
+    
+    ; end calculate checksum
     
     ; xmt address of most recent A/D value put in snap peak buffer
     
@@ -1685,13 +1700,14 @@ xmtSnapshotBuffer:
     
     ; xmt snapshot buffer via I2C
     
-    addfsr  FSR0,-.32           ; move FSR0 to first byte in rundata (-128)
-    addfsr  FSR0,-.32
-    addfsr  FSR0,-.32
-    addfsr  FSR0,-.32           ; addfsr instruction can only handle -32 to 31
-    movlw   .128
+    movf    snapXmtBufH,W       ; point FSR0 at snapshot xmt buffer
+    movwf   FSR0H
+    movf    snapXmtBufL,W
+    movwf   FSR0L
+    movlw   SNAPSHOT_BUF_LEN    ; set up counter for xmtSnapshotBuffer_xmtLoop
     movwf   scratch0
 xmtSnapshotBuffer_xmtLoop:
+    bcf     FSR0,.7             ; clear bit 7 so 128-byte cicular buffer automatically rolls around
     moviw   FSR0++
     call    sendByteViaI2C
     btfsc   commonFlags,BIT_RDY_STOP
