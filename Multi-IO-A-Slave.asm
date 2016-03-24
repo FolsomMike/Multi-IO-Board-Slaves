@@ -304,8 +304,7 @@ SNAPSHOT_BUF_LEN    EQU .128            ; NOTE: Must always be an even number!
 
 ; CONFIG1
 ; __config 0xF9E4
- ;//DEBUG HSS//__CONFIG _CONFIG1, _FOSC_ECH & _WDTE_OFF & _PWRTE_OFF & _MCLRE_ON & _CP_OFF & _BOREN_OFF & _CLKOUTEN_ON & _IESO_OFF & _FCMEN_OFF
- __CONFIG _CONFIG1, _FOSC_INTOSC & _WDTE_OFF & _PWRTE_OFF & _MCLRE_ON & _CP_OFF & _BOREN_OFF & _CLKOUTEN_ON & _IESO_OFF & _FCMEN_OFF ;//DEBUG HSS//
+ __CONFIG _CONFIG1, _FOSC_ECH & _WDTE_OFF & _PWRTE_OFF & _MCLRE_ON & _CP_OFF & _BOREN_OFF & _CLKOUTEN_ON & _IESO_OFF & _FCMEN_OFF
 ; CONFIG2
 ; __config 0xFFFF
  __CONFIG _CONFIG2, _WRT_ALL & _CPUDIV_NOCLKDIV & _USBLSCLK_48MHz & _PLLMULT_4x & _PLLEN_ENABLED & _STVREN_ON & _BORV_LO & _LPBOR_OFF & _LVP_OFF
@@ -982,15 +981,6 @@ setupClock:
 
     ; Since each slave pic is set up to use an external clock (see notes at top of page),
     ; there is no need to set anything programmatically
-    
-    ;//DEBUG HSS// -- remove later (hopefully)
-    banksel OSCCON
-
-    bcf     OSCCON, IRCF0   ; choose internal clock frequency of 32 MHz (after PLL multiplier)
-    bsf     OSCCON, IRCF1   
-    bsf     OSCCON, IRCF2
-    bsf     OSCCON, IRCF3   ; IRCF<3:0> set to 1110 -> 8 MHz before PLL multiplier
-    ;//DEBUG HSS// -- end remove later
     
     return
 
