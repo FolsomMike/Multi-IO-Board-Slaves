@@ -1644,6 +1644,7 @@ getRunData_xmtLoop:
 ; PIC_GET_SNAPSHOT_CMD is received from the Master PIC.
 ;
 ; Rundata currently consists of:
+;   001 bytes   address of most recent A/D value put in snap peak buffer
 ;   128 bytes   snapshot buffer
 ;   001 bytes   check sum
 ;   ---
@@ -1661,15 +1662,26 @@ xmtSnapshotBuffer:
     movwf   FSR0H
     movf    snapXmtBufL,W
     movwf   FSR0L
+    movwf   scratch1            ; address of most recent A/D value put in snap peak buffer
     
     banksel scratch0
     
     movlw   .128                ; sum bytes in snapshot xmt buffer
     movwf   scratch0
     call    sumSeries
+    addwf   scratch1,W          ; include address of most recent A/D value put in snap peak buffer
     comf    WREG,W              ; use two's complement to get checksum value
     addlw   .1
     movwf   scratch2            ; store checksum for future use
+    
+    ; xmt address of most recent A/D value put in snap peak buffer
+    
+    movf    scratch1,W
+    call    sendByteViaI2C
+    btfsc   commonFlags,BIT_RDY_STOP
+    goto    cleanUpI2CAndReturn ; bail out if stop condition received for some reason
+    
+    ; end xmt address of most recent A/D value put in snap peak buffer
     
     ; xmt snapshot buffer via I2C
     
