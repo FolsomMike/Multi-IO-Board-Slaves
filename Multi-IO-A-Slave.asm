@@ -267,6 +267,7 @@ PIC_DISABLE_POT_CMD             EQU .6
 PIC_GET_LAST_AD_VALUE_CMD       EQU .7
 PIC_SET_ONOFF_CMD               EQU .8
 PIC_GET_SNAPSHOT_CMD            EQU .9
+PIC_SET_LOCATION_CMD            EQU .10
 
 I2C_RCV_BUF_LEN      EQU .5
 I2C_XMT_BUF_LEN      EQU .20
@@ -792,6 +793,8 @@ SNAP_BUF3_LINEAR_LOC_L  EQU low SNAP_BUF3_LINEAR_ADDR
     
     rundataCatchBufH        ; run data catch buffer has to be here, but xmt can be in a normal bank
     rundataCatchBufL        ; see notes at top of file "Rundata Buffering"
+    
+    locClk                  ; linear location/clock position -- //WIP HSS// explain this better
     
     lastADSample            ; last A/D sample recorded
     lastADAbsolute          ; absolute value of lastADSample
@@ -2006,6 +2009,11 @@ handleI2CReceive:
     sublw   PIC_SET_ONOFF_CMD
     btfsc   STATUS,Z
     goto    handleHostChannelOnOffCmd
+    
+    movf    masterCmd,W
+    sublw   PIC_SET_LOCATION_CMD
+    btfsc   STATUS,Z
+    goto    handleHostSetLocationCmd
 
     return
 
@@ -2087,6 +2095,28 @@ handleHostChannelOnOffCmd:
     goto    turnChannelOff              ; if byte received was 0 then turn channel on
 
 ; end handleHostChannelOnOffCmd
+;--------------------------------------------------------------------------------------------------
+    
+;--------------------------------------------------------------------------------------------------
+; handleHostSetLocationCmd
+;
+; Stores the next byte sent by the Master PIC as the linear location/clock position. 
+;
+; //WIP HSS// explain why it is called "linear location/clock position"
+;
+
+handleHostSetLocationCmd:
+    
+    movlw   .1                          ; receive 1 byte from Master PIC via I2C
+    call    receiveBytesFromI2C
+    
+    banksel scratch3                    ; store received byte as linear location/clock position
+    movf    scratch3,W
+    movwf   locClk
+    
+    return
+
+; end handleHostSetLocationCmd
 ;--------------------------------------------------------------------------------------------------
     
 ;--------------------------------------------------------------------------------------------------
