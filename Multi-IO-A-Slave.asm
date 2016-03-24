@@ -68,10 +68,6 @@
 ; swapped. Thus the current data will be preserved while transmitting; new data will be stored in a 
 ; separate buffer.
 ;
-; The catch buffer pointer is in Common RAM to minimize the number of bankselects required in the 
-; A/D interrupt. Since transmitting the snapshot is not as time sensitive, the xmt buffer pointer is
-; not stored in Common RAM.
-;
 ; ----------------
 ; 
 ; Snapshot Buffering
@@ -523,11 +519,27 @@ AD_CHANNEL_CODE    EQU     b'00100101'
     pbScratch3
     pbScratch4
 
-    rundataXmtBufH          ; xmt buffer can be in here, but catch buf needs to be in common RAM
-    rundataXmtBufL          ; see notes at top of file "Rundata Buffering"
+    ; rundata buffer pointers
+    rundataXmtBufH
+    rundataXmtBufL
+    rundataCatchBufH
+    rundataCatchBufL
     
-    snapXmtBufH             ; xmt buffer can be in here, but catch bufs needs to be in common RAM
-    snapXmtBufL             ; see notes at top of file "Snapshot Buffering"
+    ; snapshot buffer pointers
+    snapXmtBufH
+    snapXmtBufL
+    snapCatchBufH
+    snapCatchBufL
+    snapPeakBufH
+    snapPeakBufL
+    
+    ; Snapshot buffer values -- see notes at top of file "Snapshot Bufferring"
+    lastADAbsolute          ; absolute value of lastADSample
+    peakADAbsolute          ; greatest A/D absolute value
+    snapBufCnt              ; number of samples in Snapshot Buffer still needed for 64 after peak
+    
+    locClk                  ; linear location/clock position -- //WIP HSS// explain this better
+    clkLoc                  ; clock position/linear location -- //WIP HSS// explain this better
 
  endc
  
@@ -799,27 +811,10 @@ SNAP_BUF3_LINEAR_LOC_L  EQU low SNAP_BUF3_LINEAR_ADDR
                             ; bit 5: 0 =
 							; bit 6: 0 =
 							; bit 7: 0 =
-    
-    rundataCatchBufH        ; run data catch buffer has to be here, but xmt can be in a normal bank
-    rundataCatchBufL        ; see notes at top of file "Rundata Buffering"
-    
-    locClk                  ; linear location/clock position -- //WIP HSS// explain this better
-    clkLoc                  ; clock position/linear location -- //WIP HSS// explain this better
-    
+                            
     lastADSample            ; last A/D sample recorded
-    lastADAbsolute          ; absolute value of lastADSample
     lastSampleClk           ; clock position of the last A/D sample recorded
     lastSampleLoc           ; linear location of the last A/D sample recorded
-    
-    ; Two snapshot buffers required here -- see notes at top of file "Snapshot Bufferring"
-    snapCatchBufH
-    snapCatchBufL
-    snapPeakBufH
-    snapPeakBufL
-    
-    ; Values below are for the snapshot buffer -- see notes at top of file "Snapshot Bufferring"
-    peakADAbsolute          ; greatest A/D absolute value
-    snapBufCnt              ; number of samples in Snapshot Buffer still needed for 64 after peak
     
  endc
     
@@ -1794,6 +1789,7 @@ turnChannelOff:
     ; end set rundata xmt buffer to 0s
     
     ; reset rundata catch buffer for when channel is enabled again
+    banksel peakFlags
     movf    rundataCatchBufH,W
     movwf   FSR0H
     movf    rundataCatchBufL,W
@@ -1803,19 +1799,20 @@ turnChannelOff:
     
     ; reset snapshot xmt, peak, and catch buffers
     banksel peakFlags
-    
     movf    snapXmtBufH,W
     movwf   FSR1H
     movf    snapXmtBufL,W
     movwf   FSR1L
     call    resetSnapshotBuffer
     
+    banksel peakFlags
     movf    snapPeakBufH,W
     movwf   FSR1H
     movf    snapPeakBufL,W
     movwf   FSR1L
     call    resetSnapshotBuffer
     
+    banksel peakFlags
     movf    snapCatchBufH,W
     movwf   FSR1H
     movf    snapCatchBufL,W
@@ -2684,6 +2681,8 @@ handleADInterrupt:
     banksel TMR0                ; store current clock position
     movf    TMR0,W
     movwf   lastSampleClk
+    
+    banksel peakFlags
     
     movf    rundataCatchBufH,W  ; point FSR0 at rundata catch buffer
     movwf   FSR0H
