@@ -1577,7 +1577,7 @@ getRunData:
     movf    rundataXmtBufL,W
     movwf   rundataCatchBufL
     movf    snapXmtBufH,W
-    movwf   snapPeakBufH    
+    movwf   snapPeakBufH
     bsf     INTCON,GIE          ; re-enable all interrupts
     
     banksel peakFlags
@@ -1596,9 +1596,9 @@ getRunData:
     
 skipBufferResetAndSwap:
     
+    banksel peakADAbsolute      ; store the peakADAbsolute so we can have our own value to work with 
+    movf    peakADAbsolute,W
     banksel scratch0
-    
-    movf    peakADAbsolute,W    ; store the peakADAbsolute so we can have our own value to work with 
     movwf   scratch1            ; (handleADInterrupt: might change peakADAbsolute often)
     
     movlw   .56                 ; sum bytes in rundata xmt buffer
@@ -1651,7 +1651,7 @@ getRunData_xmtLoop:
 ;   128 bytes   snapshot buffer
 ;   001 bytes   check sum
 ;   ---
-;   129 bytes    total
+;   130 bytes    total
 ;
 ; This function is done in the main code and not in interrupt code. It is expected that the A/D
 ; converter interrupt will occur one or more times during transmission of the data.
@@ -1683,8 +1683,8 @@ xmtSnapshotBuffer:
     
 xmtSnapBuf_SumLoop:             ; sum bytes in snapshot xmt buffer
     addfsr  INDF0,1             ; add first so it points at start of buffer
-    addwf   INDF0,W
     bcf     FSR0,.7             ; clear bit 7 so 128-byte cicular buffer automatically rolls around
+    addwf   INDF0,W
     decfsz  scratch0,F
     goto    xmtSnapBuf_SumLoop
     
@@ -1704,13 +1704,15 @@ xmtSnapBuf_SumLoop:             ; sum bytes in snapshot xmt buffer
     ; end xmt address of most recent A/D value put in snap peak buffer
     
     ; xmt snapshot buffer via I2C
-    
-    movf    snapXmtBufH,W       ; point FSR0 at snapshot xmt buffer
+    banksel snapXmtBufH         ; point FSR0 at snapshot xmt buffer
+    movf    snapXmtBufH,W
     movwf   FSR0H
     movf    snapXmtBufL,W
     movwf   FSR0L
     movlw   SNAPSHOT_BUF_LEN    ; set up counter for xmtSnapshotBuffer_xmtLoop
+    banksel scratch0
     movwf   scratch0
+    addfsr  INDF0,1             ; add first so it points at start of buffer
 xmtSnapshotBuffer_xmtLoop:
     bcf     FSR0,.7             ; clear bit 7 so 128-byte cicular buffer automatically rolls around
     moviw   FSR0++
@@ -2154,6 +2156,7 @@ handleHostSetLocationCmd:
     
     banksel scratch3                    ; store received byte as linear location/clock position
     movf    scratch3,W
+    banksel locClk
     movwf   locClk
     
     return
@@ -2176,6 +2179,7 @@ handleHostSetClockCmd:
     
     banksel scratch3                    ; store received byte
     movf    scratch3,W
+    banksel clkLoc
     movwf   clkLoc
     banksel TMR0
     movwf   TMR0
