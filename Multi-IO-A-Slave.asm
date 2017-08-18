@@ -571,7 +571,7 @@ AD_CHANNEL_CODE    EQU     b'00100101'
 ;--------------------------------------------------------------------------
  
 ;--------------------------------------------------------------------------
-; Bank 03.2 - Variables for snapshot buffer 2
+; Bank 03.2 - Variables for snapshot buffer 1
 ;
 ; This is one of the three snapshot buffers used for the snapshot of the 
 ; greatest absolute A/D value. 
@@ -1900,7 +1900,6 @@ getRunData_clockMapLoop:
 ;
 ; ON ENTRY:
 ;
-; W contains number of bytes to zero
 ; FSR1 points to start of buffer
 ;
 
@@ -1910,7 +1909,7 @@ resetSnapshotBuffer:
     movlw   SNAPSHOT_BUF_LEN
     movwf   scratch0
 
-    movlw   0x00
+    movlw   0x7F
 
 rSBLoop:
 
