@@ -1669,7 +1669,7 @@ xmtSnapshotBuffer:
     movwf   FSR0L
     
     banksel scratch0
-    
+    movlw   0xFF;//DEBUG HSS//
     movwf   scratch1            ; store address of most recent A/D value put in snap peak buffer
     
     ; calculate checksum
@@ -2751,20 +2751,8 @@ handleADInterrupt_checkClockMap:
 ; begin stuff with the snapshot buffer
     
     subwf   peakADAbsolute,W    ; see if lastADAbsolute is new overall peak
-    btfsc   STATUS,C            ; if clear then new peak was found (lastADAbsolute > peakADAbsolute)
-    goto    adInterrupt_putLastSmplInSnapBuf
-    
-    movf    lastADAbsolute,W    ; store new peak and reset counter
-    movwf   peakADAbsolute
-    movlw   SNAPSHOT_BUF_LEN/2
-    movwf   snapBufCnt
-    goto    adInterrupt_putLastSmplInSnapBuf    ; skip over counter check
-    
-handleADInterrupt_checkCounter:
-    
-    movf    snapBufCnt,F
-    btfsc   STATUS,Z
-    goto    adInterrupt_putLastSmplInSnapBuf    ; skip over counter dec if it is already zero
+    btfss   STATUS,C            ; if set then no new peak was found (lastADAbsolute > peakADAbsolute)
+    goto    adInterrupt_storeNewPeak
     
     decfsz  snapBufCnt,F        ; decrement and check counter
     goto    adInterrupt_putLastSmplInSnapBuf    ; skip over buffer switch if not zero yet
@@ -2780,7 +2768,18 @@ handleADInterrupt_checkCounter:
     movf    snapCatchBufL,W     ; replace snapPeakBufL with snapCatchBufL
     movwf   snapPeakBufL
     clrf    snapCatchBufL       ; point snapCatchBufL at start of buffer
+    
+    clrf    peakADAbsolute
+    clrf    snapBufCnt
+    goto    adInterrupt_putLastSmplInSnapBuf
     ; done switching buffers
+    
+adInterrupt_storeNewPeak:
+    
+    movf    lastADAbsolute,W    ; store new peak and reset counter
+    movwf   peakADAbsolute
+    movlw   SNAPSHOT_BUF_LEN/2
+    movwf   snapBufCnt
     
 adInterrupt_putLastSmplInSnapBuf:
     
