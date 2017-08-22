@@ -1670,7 +1670,6 @@ xmtSnapshotBuffer:
     movwf   FSR0L
     
     banksel scratch0
-    movlw   0xFF;//DEBUG HSS//
     movwf   scratch1            ; store address of most recent A/D value put in snap peak buffer
     
     ; calculate checksum
