@@ -805,7 +805,7 @@ SNAP_BUF3_LINEAR_LOC_L  EQU low SNAP_BUF3_LINEAR_ADDR
   
     commonFlags             ; bit 0: 0 = channel is off, 1 = channel is on (BIT_CHAN_ONOFF)
                             ; bit 1: 0 = ready to send next byte, 1 = stop condition (BIT_RDY_STOP)
-                            ; bit 2: 0 =
+                            ; bit 2: 0 = 
                             ; bit 3: 0 =
                             ; bit 4: 0 =
                             ; bit 5: 0 =
@@ -1598,6 +1598,7 @@ skipBufferResetAndSwap:
     
     banksel peakADAbsolute      ; store the peakADAbsolute so we can have our own value to work with 
     movf    peakADAbsolute,W
+    clrf    peakADAbsolute      ; reset peak to zero
     banksel scratch0
     movwf   scratch1            ; (handleADInterrupt: might change peakADAbsolute often)
     
@@ -2679,7 +2680,35 @@ handleADInterrupt:
 
     bsf     ADCON0,ADGO         ; start next A/D conversion
     
-    movwf   lastADSample        ; store A/D sample
+    ;//DEBUG HSS//movwf   lastADSample        ; store A/D sample ;//DEBUG HSS// uncomment for live values
+    
+    ;//DEBUG HSS// remove
+    
+    ;//DEBUG HSS// uncomment to test negative & postive values
+    incf    lastADSample
+    movlw   .191              ; 64 + 127
+    subwf   lastADSample,W
+    btfss   STATUS,C          ; if (W <= lastADSample) reset
+    goto    debugHss
+    
+    movlw   .63
+    movwf   lastADSample
+    
+    ;//DEBUG HSS// uncomment to test postive values
+    ;incfsz  lastADSample
+    ;goto    debugHss
+    ;movlw  0x7f
+    ;movwf   lastADSample
+    
+    ;//DEBUG HSS// uncomment to test postive values
+    ;decfsz  lastADSample
+    ;goto    debugHss
+    ;movlw   0x80
+    ;movwf   lastADSample
+    
+debugHss: 
+;//DEBUG HSS//end remove
+    
     
     banksel TMR0                ; store current clock position
     movf    TMR0,W
@@ -2751,11 +2780,33 @@ handleADInterrupt_checkClockMap:
 ; begin stuff with the snapshot buffer
     
     subwf   peakADAbsolute,W    ; see if lastADAbsolute is new overall peak
-    btfss   STATUS,C            ; if set then no new peak was found (lastADAbsolute > peakADAbsolute)
-    goto    adInterrupt_storeNewPeak
+    btfsc   STATUS,C            ; if clear new peak was found (lastADAbsolute > peakADAbsolute)
+    goto    adInterrupt_storeSample
+    
+    movf    lastADAbsolute,W    ; store new peak and reset counter
+    movwf   peakADAbsolute
+    movlw   SNAPSHOT_BUF_LEN/2
+    movwf   snapBufCnt          ; this # less than 128 will signal to start countdown again
+    
+    ; store in snapshot buffer
+adInterrupt_storeSample:
+    movf    snapCatchBufH,W
+    movwf   FSR0H
+    movf    snapCatchBufL,W
+    movwf   FSR0L
+    
+    movf    lastADSample,W      ; store last A/D sample in the snapshot buffer
+    movwf   INDF0
+    
+    incf    snapCatchBufL       ; increment for next time
+    bcf     snapCatchBufL,.7    ; clear bit 7 so 128-byte cicular buffer automatically rolls around
+    ; end store in snapshot buffer
+    
+    btfsc   snapBufCnt,.7       ; if highest bit is set, don't decrment (any # bigger than 127 
+    goto    adInterrupt_return  ; means we aren't counting down to a buffer switch)
     
     decfsz  snapBufCnt,F        ; decrement and check counter
-    goto    adInterrupt_putLastSmplInSnapBuf    ; skip over buffer switch if not zero yet
+    goto    adInterrupt_return  ; skip over buffer switch if not zero yet
     
     ; made it to here, which means the buffers need to be switched
     movf    snapPeakBufH,W      ; temporarily store snapPeakBufH
@@ -2769,31 +2820,13 @@ handleADInterrupt_checkClockMap:
     movwf   snapPeakBufL
     clrf    snapCatchBufL       ; point snapCatchBufL at start of buffer
     
-    clrf    peakADAbsolute
-    clrf    snapBufCnt
-    goto    adInterrupt_putLastSmplInSnapBuf
+    movlw   0xFF
+    movwf   snapBufCnt          ; set to # bigger than 127 to stop counting down to buffer switch
+    
+    goto    adInterrupt_return
     ; done switching buffers
     
-adInterrupt_storeNewPeak:
-    
-    movf    lastADAbsolute,W    ; store new peak and reset counter
-    movwf   peakADAbsolute
-    movlw   SNAPSHOT_BUF_LEN/2
-    movwf   snapBufCnt
-    
-adInterrupt_putLastSmplInSnapBuf:
-    
-    movf    snapCatchBufH,W
-    movwf   FSR0H
-    movf    snapCatchBufL,W
-    movwf   FSR0L
-    
-    movf    lastADSample,W      ; store last A/D sample in the snapshot buffer
-    movwf   INDF0
-    
-    incf    snapCatchBufL       ; increment for next time
-    bcf     snapCatchBufL,.7    ; clear bit 7 so 128-byte cicular buffer automatically rolls around
-    
+adInterrupt_return:
     retfie                      ; return and enable interrupts
     
 ; end of handleADInterrupt
