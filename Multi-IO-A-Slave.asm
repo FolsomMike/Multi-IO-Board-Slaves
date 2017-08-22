@@ -2680,35 +2680,7 @@ handleADInterrupt:
 
     bsf     ADCON0,ADGO         ; start next A/D conversion
     
-    ;//DEBUG HSS//movwf   lastADSample        ; store A/D sample ;//DEBUG HSS// uncomment for live values
-    
-    ;//DEBUG HSS// remove
-    
-    ;//DEBUG HSS// uncomment to test negative & postive values
-    incf    lastADSample
-    movlw   .191              ; 64 + 127
-    subwf   lastADSample,W
-    btfss   STATUS,C          ; if (W <= lastADSample) reset
-    goto    debugHss
-    
-    movlw   .63
-    movwf   lastADSample
-    
-    ;//DEBUG HSS// uncomment to test postive values
-    ;incfsz  lastADSample
-    ;goto    debugHss
-    ;movlw  0x7f
-    ;movwf   lastADSample
-    
-    ;//DEBUG HSS// uncomment to test postive values
-    ;decfsz  lastADSample
-    ;goto    debugHss
-    ;movlw   0x80
-    ;movwf   lastADSample
-    
-debugHss: 
-;//DEBUG HSS//end remove
-    
+    movwf   lastADSample        ; store A/D sample
     
     banksel TMR0                ; store current clock position
     movf    TMR0,W
