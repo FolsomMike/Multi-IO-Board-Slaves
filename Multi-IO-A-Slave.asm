@@ -147,6 +147,36 @@
 ;   LINEAR_LOC_H            EQU high LINEAR_ADDR
 ;   LINEAR_LOC_L            EQU low LINEAR_ADDR
 ;
+;
+; Leftover Snapshot Data:
+; 
+;   There are times that snapshot data from an old peak is included in the snapshot buffer with a new 
+;   peak's data. This only happens when a snapshot buffer does not use all 128 bytes in the circular
+;   buffer. 
+;
+;   Let's say PeakA is found and that he has 64 bytes before and 64 bytes after, filling the entire 
+;   circular buffer. The same happens with PeakB. After PeakB is found, the peak and catch buffers 
+;   are swapped, putting the snapshot for PeakA in the catch buffer. After putting PeakA snapshot in 
+;   the catch buffer, PeakC is found IMMEDIATELY, not allowing the 64 bytes to be collected before
+;   the peak. There will be 64 bytes of new data after PeakC, but the bytes that were not replaced
+;   before PeakC will be leftover data from PeakA.
+;
+;   Transmitting the data can cause the leftover data to be zeroes. This is due to the fact that
+;   the snapshot xmt buffer is zeroed and then swapped with the peak buffer. In the case above,
+;   the snapshot buffer for PeakA would be all zeroes.
+;
+;   Possible Solutions:
+;   As of right now (08/24/2017), nothing is being done to account for these issues. All data found
+;   in PeakA is guaranteed to have smaller absolute values than any data in PeakC, so
+;   we are assuming that the leftover data will not be noticeable by users. If it turns out that the
+;   snapshot reveals something important, this will HAVE to be fixed.
+;
+;   If we ever decide that this needs to be fixed in the future, it would help to keep in mind that
+;   the missing bytes for the PeakC are in last 64 bytes of PeakB snapshot.
+;
+;   Also, sending back the number of bytes captured before the peak would help a lot when it comes
+;   to rotating the peak to the center.
+;
 ; ----------------
 ;
 ;--------------------------------------------------------------------------------------------------
@@ -811,7 +841,7 @@ SNAP_BUF3_LINEAR_LOC_L  EQU low SNAP_BUF3_LINEAR_ADDR
                             ; bit 5: 0 =
 							; bit 6: 0 =
 							; bit 7: 0 =
-                            
+                
     lastADSample            ; last A/D sample recorded
     lastSampleClk           ; clock position of the last A/D sample recorded
     lastSampleLoc           ; linear location of the last A/D sample recorded
@@ -1712,7 +1742,6 @@ xmtSnapBuf_SumLoop:             ; sum bytes in snapshot xmt buffer
     movlw   SNAPSHOT_BUF_LEN    ; set up counter for xmtSnapshotBuffer_xmtLoop
     banksel scratch0
     movwf   scratch0
-    addfsr  INDF0,1             ; add first so it points at start of buffer
 xmtSnapshotBuffer_xmtLoop:
     bcf     FSR0,.7             ; clear bit 7 so 128-byte cicular buffer automatically rolls around
     moviw   FSR0++
@@ -1909,7 +1938,8 @@ resetSnapshotBuffer:
     movlw   SNAPSHOT_BUF_LEN
     movwf   scratch0
 
-    movlw   0x7F
+    ;//DEBUG HSS//movlw   0x7F
+    movlw   0x89 ;//DEBUG HSS// remove later
 
 rSBLoop:
 
@@ -2679,7 +2709,35 @@ handleADInterrupt:
 
     bsf     ADCON0,ADGO         ; start next A/D conversion
     
-    movwf   lastADSample        ; store A/D sample
+    movwf   lastADSample        ; store A/D sample ;//DEBUG HSS// uncomment for live values
+    
+    ;//DEBUG HSS// remove
+    
+    ;//DEBUG HSS// uncomment to test negative & postive values
+    ;incf    lastADSample
+    ;movlw   .191              ; 64 + 127
+    ;subwf   lastADSample,W
+    ;btfss   STATUS,C          ; if (W <= lastADSample) reset
+    ;goto    debugHss
+    
+    ;movlw   .63
+    ;movwf   lastADSample
+    
+    ;//DEBUG HSS// uncomment to test postive values
+    ;incfsz  lastADSample
+    ;goto    debugHss
+    ;movlw  0x7f
+    ;movwf   lastADSample
+    
+    ;//DEBUG HSS// uncomment to test negative values
+    ;decfsz  lastADSample
+    ;goto    debugHss
+    ;movlw   0x80
+    ;movwf   lastADSample
+    
+debugHss: 
+;//DEBUG HSS//end remove
+    
     
     banksel TMR0                ; store current clock position
     movf    TMR0,W
@@ -2779,6 +2837,16 @@ adInterrupt_storeSample:
     decfsz  snapBufCnt,F        ; decrement and check counter
     goto    adInterrupt_return  ; skip over buffer switch if not zero yet
     
+    ;//DEBUG HSS// reomve
+    ;movlw   0xFF
+    ;movwf   INDF0
+    ;incfsz  lastADSample
+    ;goto    debugHss2
+    ;movlw   0x7F
+    ;movwf   lastADSample
+;debugHss2:
+    ;//DEBUG HSS// remove 
+    
     ; made it to here, which means the buffers need to be switched
     movf    snapPeakBufH,W      ; temporarily store snapPeakBufH
     movwf   FSR0H
@@ -2794,7 +2862,6 @@ adInterrupt_storeSample:
     movlw   0xFF
     movwf   snapBufCnt          ; set to # bigger than 127 to stop counting down to buffer switch
     
-    goto    adInterrupt_return
     ; done switching buffers
     
 adInterrupt_return:
