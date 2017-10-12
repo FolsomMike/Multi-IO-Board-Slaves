@@ -947,7 +947,7 @@ setup:
 
     bsf     INTCON,PEIE     ; enable peripheral interrupts (Timers, A/D converter, etc.)
 
-    bsf     INTCON,IOCIE    ; enable interrupt-on-change for enabled inputs
+    ;//DEBUG HSS//bsf     INTCON,IOCIE    ; enable interrupt-on-change for enabled inputs
 
     bsf     INTCON,GIE      ; enable all interrupts
 
