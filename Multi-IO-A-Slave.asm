@@ -2699,8 +2699,12 @@ hiocExit:
 ;
 
 handleADInterrupt:
-
+    
 	bcf 	PIR1,ADIF           ; clear the interrupt flag
+    
+    ;//DEBUG HSS// pulsing Port B, Bit RB7 to test how much time interrupt is taking up
+    bsf PORTB, RB7
+    ;//DEBUG HSS// end
 
     banksel ADRESH              ; get A/D sample
     movf    ADRESH,W            ; read upper 8 bits of result
@@ -2865,6 +2869,10 @@ adInterrupt_storeSample:
     ; done switching buffers
     
 adInterrupt_return:
+    ;//DEBUG HSS// pulsing Port B, Bit RB7 to test how much time interrupt is taking up
+    banksel PORTB
+    bcf PORTB, RB7
+    ;//DEBUG HSS// end
     retfie                      ; return and enable interrupts
     
 ; end of handleADInterrupt
